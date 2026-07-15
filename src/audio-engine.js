@@ -66,9 +66,14 @@ export class AudioEngine {
     const target = clamp01(cue.volume ?? 1);
     const fi = Math.max(0, fadeIn);
     if (fi > 0) {
-      gain.gain.setValueAtTime(0.0001, now);
-      gain.gain.exponentialRampToValueAtTime(Math.max(0.0001, target), now + fi);
-      gain.gain.setValueAtTime(target, now + fi);
+      // Equal-power (sinus) fade-in: gelijkmatig hoorbaar opkomen, niet "eerst niks
+      // en dan ineens veel" zoals bij een exponentiële ramp vanaf bijna nul.
+      const steps = 48;
+      const curve = new Float32Array(steps + 1);
+      for (let i = 0; i <= steps; i++) {
+        curve[i] = Math.sin((i / steps) * (Math.PI / 2)) * target;
+      }
+      gain.gain.setValueCurveAtTime(curve, now, fi);
     } else {
       gain.gain.setValueAtTime(target, now);
     }
@@ -180,19 +185,21 @@ export class AudioEngine {
     }
   }
 
-  // Fade één cue uit over `seconds` en verwijder daarna.
-  fadeOutCue(cueId, seconds = 3) {
+  // Fade één cue uit en verwijder daarna. Zonder `seconds` gebruikt hij de eigen
+  // fade-uit-tijd van de cue.
+  fadeOutCue(cueId, seconds) {
     const v = this.voices.get(cueId);
     if (!v) return;
+    const fade = seconds != null ? seconds : Math.max(0, parseFloat(v.cue?.fadeOut) || 0);
     if (v.paused || !v.source) {
       this.voices.delete(cueId);
       return;
     }
-    this._fadeAndStop(v, seconds);
+    this._fadeAndStop(v, fade);
   }
 
-  // Kern-eis: fade ALLE cues uit (Esc).
-  fadeOutAll(seconds = 3) {
+  // Fade ALLE cues uit (Esc). Zonder `seconds`: elke cue over zijn eigen fade-uit.
+  fadeOutAll(seconds) {
     for (const cueId of [...this.voices.keys()]) this.fadeOutCue(cueId, seconds);
   }
 

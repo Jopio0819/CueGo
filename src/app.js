@@ -13,8 +13,12 @@ let anchorIndex = -1;
 
 // Instellingen (persist in localStorage).
 const SETTINGS_KEY = 'webqlab.settings.v1';
-const defaultSettings = { defaultFadeIn: 0, escFade: 3, singleCueMode: false, blockBrowserKeys: true, inspectorHidden: false, saveKeybindsWithProject: false };
-const settings = { ...defaultSettings, ...loadSettings() };
+const defaultSettings = { defaultFadeIn: 0, defaultFadeOut: 3, singleCueMode: false, blockBrowserKeys: true, inspectorHidden: false, saveKeybindsWithProject: false };
+const _loadedSettings = loadSettings();
+const settings = { ...defaultSettings, ..._loadedSettings };
+// Migratie: oude 'escFade'-instelling → 'defaultFadeOut'.
+if (_loadedSettings.escFade != null && _loadedSettings.defaultFadeOut == null) settings.defaultFadeOut = _loadedSettings.escFade;
+delete settings.escFade;
 
 function loadSettings() {
   try { return JSON.parse(localStorage.getItem(SETTINGS_KEY)) || {}; } catch { return {}; }
@@ -358,12 +362,12 @@ function go() {
   syncInspector();
 }
 
-function escFadeSeconds() { return Number.isFinite(settings.escFade) ? settings.escFade : 3; }
-
 function panic() {
-  const secs = escFadeSeconds();
-  engine.fadeOutAll(secs);
-  setTimeout(render, secs * 1000 + 100);
+  // Elke spelende cue faadt uit over zijn eigen fade-uit-tijd.
+  const fades = [...engine.voices.values()].map((v) => Math.max(0, parseFloat(v.cue?.fadeOut) || 0));
+  engine.fadeOutAll();
+  const maxFade = fades.length ? Math.max(...fades) : 0;
+  setTimeout(render, maxFade * 1000 + 200);
 }
 function hardStop() { engine.stopAll(); render(); }
 
@@ -502,7 +506,8 @@ function addFiles(fileList) {
   for (const file of fileList) {
     if (!isAudioFile(file)) continue;
     const cue = cues.add(file);
-    cue.fadeIn = settings.defaultFadeIn; // standaard fade-in uit instellingen
+    cue.fadeIn = settings.defaultFadeIn; // standaard fades uit instellingen
+    cue.fadeOut = settings.defaultFadeOut;
     saveAudio(cue.id, file).catch((err) => console.warn('Opslaan mislukt:', err));
     added += 1;
   }
@@ -689,7 +694,7 @@ function selectTab(name) {
 
 function syncSettingsForm() {
   $('setFadeIn').value = settings.defaultFadeIn;
-  $('setEscFade').value = settings.escFade;
+  $('setFadeOut').value = settings.defaultFadeOut;
   $('setSingleCue').checked = settings.singleCueMode;
   $('setBlockKeys').checked = settings.blockBrowserKeys;
   $('setSaveKeybinds').checked = settings.saveKeybindsWithProject;
@@ -738,7 +743,7 @@ function bindSettings() {
   settingsModal.querySelectorAll('.tab').forEach((t) => t.addEventListener('click', () => selectTab(t.dataset.tab)));
 
   $('setFadeIn').addEventListener('input', (e) => { settings.defaultFadeIn = num(e.target.value, 0); saveSettings(); });
-  $('setEscFade').addEventListener('input', (e) => { settings.escFade = num(e.target.value, 3); saveSettings(); });
+  $('setFadeOut').addEventListener('input', (e) => { settings.defaultFadeOut = num(e.target.value, 3); saveSettings(); });
   $('setSingleCue').addEventListener('change', (e) => {
     settings.singleCueMode = e.target.checked;
     saveSettings();
