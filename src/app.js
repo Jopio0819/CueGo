@@ -529,16 +529,24 @@ async function openFadeInPrompt() {
   syncInspector();
 }
 
-// Speel cue A en cross-fade vlak voor A's einde naar cue B over `fade` seconden.
+// Cross-fade van cue A naar cue B, getimed zodat de overgang vlak vóór A's einde
+// voltooid is. Speelt A al, dan wordt die NIET herstart (transitie o.b.v. resttijd);
+// speelt A niet, dan start A eerst vanaf het begin.
 async function transitionBetween(a, b, fade) {
   await engine.prepare(a).catch(() => {});
   await engine.prepare(b).catch(() => {});
-  await engine.play(a, { onEnded: onCueEnded });
-  render();
-  animateProgress();
   const lenA = engine.playLength(a) || 0;
+  let remaining;
+  if (engine.isPlaying(a.id)) {
+    remaining = Math.max(0, lenA - engine.position(a.id)); // A speelt al → resttijd
+  } else {
+    await engine.play(a, { onEnded: onCueEnded }); // A start nu vanaf begin
+    render();
+    animateProgress();
+    remaining = lenA;
+  }
   // Kleine voorsprong zodat de transitie nog vóór A's natuurlijke einde valt (ook bij fade 0).
-  const startMs = Math.max(0, lenA - Math.max(fade, 0.06)) * 1000;
+  const startMs = Math.max(0, remaining - Math.max(fade, 0.06)) * 1000;
   setTimeout(async () => {
     if (!engine.isPlaying(a.id)) return; // gebruiker greep in → transitie afblazen
     engine.fadeOutCue(a.id, fade); // A uitfaden
@@ -957,22 +965,41 @@ const LOCK_EDIT_IDS = [
 ];
 
 function hasPassword() { try { return !!JSON.parse(localStorage.getItem(LOCK_KEY)); } catch { return false; } }
-async function sha256Hex(str) {
-  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(str));
-  return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, '0')).join('');
+
+// SHA-256 vereist crypto.subtle (secure context). Buiten https/localhost valt de
+// soft-lock terug op een simpele hash zodat 'wachtwoord instellen' overal werkt.
+const HASH_ALGO = (window.crypto && window.crypto.subtle) ? 'sha256' : 'simple';
+function simpleHash(str) {
+  let h1 = 0x811c9dc5 >>> 0, h2 = 0xc9dc5118 >>> 0;
+  for (let i = 0; i < str.length; i++) {
+    const c = str.charCodeAt(i);
+    h1 = Math.imul(h1 ^ c, 0x01000193) >>> 0;
+    h2 = Math.imul(h2 ^ (c + i + 1), 0x01000193) >>> 0;
+  }
+  return (h1 >>> 0).toString(16).padStart(8, '0') + (h2 >>> 0).toString(16).padStart(8, '0');
+}
+async function hashWith(algo, str) {
+  if (algo === 'sha256' && window.crypto?.subtle) {
+    const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(str));
+    return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, '0')).join('');
+  }
+  return simpleHash(str);
 }
 function randomSalt() {
-  const a = new Uint8Array(16); crypto.getRandomValues(a);
+  const a = new Uint8Array(16);
+  if (window.crypto?.getRandomValues) crypto.getRandomValues(a);
+  else for (let i = 0; i < a.length; i++) a[i] = Math.floor(Math.random() * 256);
   return [...a].map((b) => b.toString(16).padStart(2, '0')).join('');
 }
 async function setPassword(pw) {
   const salt = randomSalt();
-  localStorage.setItem(LOCK_KEY, JSON.stringify({ salt, hash: await sha256Hex(salt + pw) }));
+  const algo = HASH_ALGO;
+  localStorage.setItem(LOCK_KEY, JSON.stringify({ salt, algo, hash: await hashWith(algo, salt + pw) }));
 }
 async function checkPassword(pw) {
   try {
-    const { salt, hash } = JSON.parse(localStorage.getItem(LOCK_KEY));
-    return (await sha256Hex(salt + pw)) === hash;
+    const { salt, hash, algo } = JSON.parse(localStorage.getItem(LOCK_KEY));
+    return (await hashWith(algo || 'sha256', salt + pw)) === hash;
   } catch { return false; }
 }
 

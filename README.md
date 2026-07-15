@@ -1,110 +1,117 @@
-# Cue Player
+# CueGo
 
-Een professionele, QLab-achtige audio-cuespeler die volledig in de browser draait. Audio komt
-lokaal van je computer; je speelt cues op volgorde af met de spatiebalk, en met **Esc** fade je
-alles uit. Geen backend nodig — 100% statisch.
+A professional, QLab-style audio cue player that runs entirely in the browser. Audio comes from
+your own local files; you play cues in order with the spacebar and fade everything out with **Esc**.
+No backend, no account — it works offline, which is exactly what you want during a live show.
 
-## Starten
+## Running it
 
 ```bash
 cd webqlab
 node server.mjs
 ```
 
-Open daarna **http://localhost:4321** (Chrome of Edge aanbevolen).
+Then open **http://localhost:4321** (Chrome or Edge recommended). The landing page has an
+**Open CueGo** button that launches the player (`app.html`).
 
-Andere poort? `PORT=8080 node server.mjs`
+Different port? `PORT=8080 node server.mjs`
 
-## Audio inladen
+## Pages
 
-Via **Toevoegen** rechtsboven:
+- `index.html` — landing page.
+- `app.html` — the actual cue player.
+- `src/` — the app modules (see *Structure* below).
 
-- **Map kiezen…** — kies één map; alle audiobestanden (ook in submappen) worden cues. Werkt in Chrome/Edge.
-- **Bestanden…** — kies losse bestanden.
-- **Slepen** — sleep bestanden of mappen in het venster (er verschijnt een drop-overlay).
+## Loading audio
 
-Bij importeren wordt de lijst automatisch **gesorteerd op het nummer in de titel**
-(bv. `01 - Intro`, `02 - Scene`, `10 - Slot`). Daarna kun je nog handmatig herordenen door te slepen —
-een lijn tussen de rijen laat zien waar de cue landt.
+Via **Add** (top-right of the player):
 
-Ondersteunde formaten: alles wat je browser kan decoderen (mp3, wav, m4a, aac, ogg, flac, opus, aiff).
+- **Choose folder…** — pick one folder; every audio file in it (and its subfolders) becomes a cue. Chrome/Edge.
+- **Files…** — pick individual files.
+- **Drag & drop** — drop files or folders onto the window.
 
-## Bediening
+On import the list is **sorted by the number in the title** (e.g. `01 - Intro`, `02 - Scene`, `10 - Finale`).
+New files are appended at the bottom; existing order is kept. You can reorder afterwards by dragging —
+a line between the rows shows where the cue will land.
 
-| Toets / actie | Wat het doet |
+Supported formats: whatever the browser can decode (mp3, wav, m4a, aac, ogg, flac, opus, aiff).
+
+## Controls
+
+| Key / action | What it does |
 |---|---|
-| **Spatie** | Speel de geselecteerde cue en schuif de selectie 1 op (de volgende wordt geselecteerd, maar niet automatisch gestart). Een cue die al speelt wordt herstart — nooit twee keer dezelfde cue tegelijk. |
-| **Dubbelklik** op een cue | Direct starten |
-| **Esc** | Fade álle spelende cues uit (tijd instelbaar in Instellingen) |
-| **2× Esc** (binnen 0,6 s) | Direct stoppen zonder fade |
-| **↑ / ↓** | Selecteer vorige/volgende cue |
-| **Shift + klik** / **Shift + ↑/↓** | Meerdere cues selecteren (een reeks) |
-| **Delete / Backspace** | Verwijder alle geselecteerde cues |
-| **Cue slepen** | Volgorde wijzigen |
-| **F** of ⛶ | Volledig scherm aan/uit |
+| **Space** | Play the selected cue and advance the selection (the next cue is selected, not auto-played). Re-triggering a cue restarts it — never two copies of the same cue at once. |
+| **Double-click** a cue | Play it immediately |
+| **I** | Transition. With **1** cue selected: start it with a chosen fade-in. With **2** selected: crossfade from the first to the second (timed to finish just before the first ends; if the first is already playing it is not restarted). Fade `0` = hard cut. |
+| **Esc** | Fade out all playing cues (each over its own fade-out time) |
+| **2× Esc** (within 0.6 s) | Stop immediately, no fade |
+| **↑ / ↓** | Select previous / next cue |
+| **Shift + click** / **Shift + ↑/↓** | Select a range of cues |
+| **Delete / Backspace** | Delete the selected cue(s) |
+| **F** | Fullscreen on/off |
+| Drag a cue | Reorder |
 
-Er zijn bewust geen losse GO/Esc-knoppen in beeld — gebruik de sneltoetsen.
+Shortcuts are **editable** under **Settings → Shortcuts** (with a Default and a VLC preset), and can be
+saved/loaded as a separate `.webqlabkeys` file.
 
-Alle sneltoetsen zijn **aanpasbaar** onder **Instellingen → Sneltoetsen**: klik op een toets om 'm
-opnieuw in te stellen. Er is een **VLC-preset** (spatie = play/pauze, pijltjes = omhoog/omlaag,
-Esc = fade uit) naast de standaard-preset. Je kunt een sneltoets-preset ook **opslaan/openen als
-apart bestand** (`.webqlabkeys`), los van het projectbestand.
+## The cue inspector
 
-Het **cue-nummer** pas je aan via het Nr.-veld in de inspector óf door **dubbel te klikken op het
-#-vakje** in de tabel.
+Per cue you can set: number, name, in/out points, fade-in, fade-out, "fade out at end", volume,
+loop (with count and crossfade), and auto-continue. It also shows the audio duration and a small
+**preview/monitor player** (play/pause + seek) so you can audition the trimmed cue.
 
-### Afspeelbalk (onderin)
+- **In/out points** trim the cue; playback, seek and duration all respect the trimmed region.
+- **Loop**: infinite (empty count) or N times, with an optional crossfade between iterations.
+- **Fade out at end**: fade the cue out over its fade-out time when it reaches its natural end (otherwise only Esc fades).
+- **Auto-continue**: automatically start the next cue after a delay when this one finishes.
 
-Een VLC-achtige balk met play/pauze, een sleepbare voortgangsbalk om door te spoelen, en de
-huidige tijd / totale duur.
+Edits apply to **all selected cues** at once. Changing the name or number of multiple cues asks for
+confirmation first.
 
-- **Normaal**: de balk bestuurt de **geselecteerde** cue. Klik een cue aan om hem te scrubben.
-- **Single cue-modus**: de balk volgt automatisch de cue die op dat moment speelt.
+## Playback bar & modes
 
-### Inspector
+A VLC-style transport bar at the bottom controls the selected cue (play/pause, seekable progress, time).
+**Single cue mode** (Settings → Playing) plays only one cue at a time — a new cue fades the previous one
+out — and the bar then follows the currently playing cue.
 
-Rechts stel je per cue de naam, fade-in, fade-out en volume in. Wijzigingen worden meteen bewaard.
+## Projects
 
-## Instellingen (⚙)
+Under **Settings → Project**:
 
-Een popup met tabbladen:
+- **New…** — start an empty show (asks to save first if there are unsaved changes).
+- **Save…** — save the whole show (order, the audio itself, and settings) to one `.webqlab` file. You choose a name.
+- **Open…** — load a `.webqlab` file (asks to save first if needed).
 
-- **Afspelen** — standaard fade-in, Esc-fade tijd, single cue-modus, en *browser-sneltoetsen
-  blokkeren* (voorkomt o.a. Ctrl/Cmd+R; enkele zoals Cmd+W/Q/T kan de browser niet blokkeren).
-- **Sneltoetsen** — de aanpasbare keybind-editor met presets (Standaard / VLC) en opslaan/openen
-  van een preset-bestand.
-- **Project** — de volledige show opslaan/openen (zie hieronder).
+Your current show is also **auto-saved between sessions**: audio in IndexedDB, metadata in localStorage,
+so a refresh brings everything back. The **project title** next to the logo is click-to-edit.
 
-## Show opslaan & openen
+## Locking
 
-Onder **Instellingen → Project** sla je de **volledige show** op als één bestand (`.webqlab`):
-de volgorde van de cues, de audio zelf én alle instellingen. Met **Openen…** laad je zo'n bestand
-weer in — handig als back-up of om een show op een andere computer te gebruiken.
+Set a password (Settings → Playing → *Set password*) to lock editing during a show: the padlock in the
+top bar then locks/unlocks. When locked, **playback keeps working** but nothing can be edited (adding,
+deleting, reordering, the inspector, project changes). Remove the password from the same settings button.
 
-Daarnaast wordt je huidige show **automatisch bewaard** tussen sessies: de audio in IndexedDB, de
-metadata in localStorage. Na een refresh laadt alles gewoon terug. Deze automatische opslag staat
-lokaal in je browser (per apparaat); gebruik de projectbestanden om te delen of back-uppen.
+Note: this is a **soft lock** to prevent accidental edits — it is client-side and therefore bypassable
+via browser devtools, not real security. The password is stored **hashed** (SHA-256 + salt in a secure
+context; a simple hash as fallback on non-HTTPS origins), never in plain text.
 
-## Online zetten (Firebase Hosting)
+## Hosting (static)
 
-De app is 100% statisch — **geen backend nodig**. Alle audio-verwerking gebeurt in de browser, dus
-je kunt het als statische site hosten (Firebase, Netlify, GitHub Pages, …).
+CueGo is 100% static — **no backend needed**. All audio processing happens in the browser, so you can
+host it on any static host (GitHub Pages, Netlify, …).
 
-```bash
-npm install -g firebase-tools
-firebase login
-cd webqlab
-firebase init hosting        # public directory: "." ; single-page app: Nee
-firebase deploy
-```
-Upload `index.html`, `style.css` en `src/` (`testaudio/` en `server.mjs` mag je weglaten — die zijn
-alleen voor lokaal testen). Firebase draait op `https`, dus ook **Map kiezen** blijft werken.
+GitHub Pages tips: put the custom domain on the **project** repo's Pages settings (not on your
+`username.github.io` user-site repo, or it takes over your whole github.io). Because links are relative
+(`app.html`, `assets/logo.png`), it works both on a custom domain and on `username.github.io/cuego/`.
 
-## Structuur
+Some features need a **secure context** (HTTPS or localhost): the folder picker (File System Access API)
+and the strongest password hashing. Over HTTP on a plain IP those degrade gracefully.
 
-- `server.mjs` — kleine statische server (Node stdlib), alleen voor lokaal draaien.
-- `src/audio-engine.js` — Web Audio: decoderen, afspelen, pauze/seek, faden. Eén voice per cue.
-- `src/cue-model.js` — cue-datamodel, cue-lijst, sorteren, herordenen.
-- `src/storage.js` — automatische opslag (IndexedDB + localStorage).
-- `src/project.js` — show opslaan/openen als één `.webqlab`-bestand.
-- `src/app.js` — UI, toetsenbord, selectie, afspeelbalk, instellingen, rendering.
+## Structure
+
+- `server.mjs` — small static server (Node stdlib), for local development only.
+- `src/audio-engine.js` — Web Audio: decode, play, pause/seek, fades, per-cue in/out, loop, crossfade.
+- `src/cue-model.js` — cue data model, cue list, sorting, reordering.
+- `src/storage.js` — auto-save (IndexedDB + localStorage).
+- `src/project.js` — save/open a whole show as one `.webqlab` file.
+- `src/app.js` — UI, keyboard, selection, transport, settings, locking, rendering.

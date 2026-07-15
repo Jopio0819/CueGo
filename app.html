@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html lang="nl">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>CueGo</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="logo">
+        <img src="assets/logo.png" alt="CueGo" />
+      </div>
+      <div id="projectTitle" class="project-title" title="Klik om de projectnaam te wijzigen">Naamloos</div>
+
+      <div class="spacer"></div>
+
+      <div class="menu" data-menu>
+        <button class="btn menu-btn" data-menu-toggle>
+          <span class="btn-plus">+</span> Toevoegen
+          <span class="caret"></span>
+        </button>
+        <div class="menu-panel">
+          <button id="pickFolderBtn" title="Kies een map met audio (Chrome/Edge)">Map kiezen…</button>
+          <button id="pickFilesBtn" title="Kies losse bestanden">Bestanden…</button>
+        </div>
+      </div>
+
+      <button id="inspectorToggle" class="btn icon-btn" title="Inspector tonen/verbergen" aria-label="Inspector tonen of verbergen">
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><line x1="15" y1="4" x2="15" y2="20"/></svg>
+      </button>
+
+      <button id="lockBtn" class="btn icon-btn" title="Vergrendelen" aria-label="Vergrendelen">
+        <svg class="ic-unlocked" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 9.9-1"/></svg>
+        <svg class="ic-locked" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" hidden><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+      </button>
+
+      <button id="settingsBtn" class="btn icon-btn" title="Instellingen" aria-label="Instellingen">
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+      </button>
+
+      <button id="fsBtn" class="btn icon-btn" title="Volledig scherm (F)" aria-label="Volledig scherm">
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3M3 16v3a2 2 0 0 0 2 2h3m8 0h3a2 2 0 0 0 2-2v-3"/></svg>
+      </button>
+
+      <input id="fileInput" type="file" accept="audio/*" multiple hidden />
+    </header>
+
+    <main class="layout">
+      <section id="cueListWrap" class="cuelist-wrap">
+        <table class="cuelist">
+          <thead>
+            <tr>
+              <th class="col-num">#</th>
+              <th class="col-status"></th>
+              <th class="col-name">Naam</th>
+              <th class="col-time">In</th>
+              <th class="col-time">Uit</th>
+              <th class="col-vol">Vol</th>
+              <th class="col-progress">Voortgang</th>
+            </tr>
+          </thead>
+          <tbody id="cueBody"></tbody>
+        </table>
+        <div id="dropLine" class="drop-line" hidden></div>
+        <div id="dropHint" class="drop-hint">
+          <div class="drop-hint-icon">♪</div>
+          Sleep audiobestanden hierheen<br />
+          <span class="drop-hint-sub">of gebruik <b>Toevoegen</b> rechtsboven</span>
+        </div>
+      </section>
+
+      <aside class="inspector" id="inspector" hidden>
+        <div class="inspector-inner">
+          <h2 class="panel-title">Inspector</h2>
+          <div class="field-row">
+            <label class="field narrow"><span>Nr.</span><input id="insNumber" type="text" placeholder="—" /></label>
+            <label class="field"><span>Naam</span><input id="insName" type="text" /></label>
+          </div>
+          <div class="field">
+            <span>Duur</span>
+            <div id="insDuration" class="readonly-value">—</div>
+          </div>
+          <div class="field-row">
+            <label class="field"><span>Begin (s)</span><input id="insInPoint" type="number" min="0" step="0.5" placeholder="0" /></label>
+            <label class="field"><span>Einde (s)</span><input id="insOutPoint" type="number" min="0" step="0.5" placeholder="einde" /></label>
+          </div>
+          <div class="preview-bar">
+            <button id="previewBtn" class="preview-btn" title="Preview (monitor)" aria-label="Preview afspelen/pauze">▶</button>
+            <span id="previewCur" class="tp-time">0:00</span>
+            <input id="previewSeek" class="seek" type="range" min="0" max="1000" step="1" value="0" aria-label="Preview-positie" />
+            <span id="previewDur" class="tp-time">0:00</span>
+          </div>
+          <div class="field-row">
+            <label class="field"><span>Fade in (s)</span><input id="insFadeIn" type="number" min="0" step="0.5" /></label>
+            <label class="field"><span>Fade uit (s)</span><input id="insFadeOut" type="number" min="0" step="0.5" /></label>
+          </div>
+          <label class="switch inspector-switch">
+            <input id="insFadeOutEnd" type="checkbox" />
+            <span class="switch-track"></span>
+            <span class="switch-label">Fade uit aan het einde<em>Anders alleen bij Esc</em></span>
+          </label>
+          <label class="field">
+            <span>Volume <em id="insVolumeVal"></em></span>
+            <input id="insVolume" type="range" min="0" max="1" step="0.01" />
+          </label>
+          <label class="switch inspector-switch">
+            <input id="insLoop" type="checkbox" />
+            <span class="switch-track"></span>
+            <span class="switch-label">Loop</span>
+          </label>
+          <label class="field" id="loopCountField" hidden>
+            <span>Aantal keer <em>(leeg = oneindig)</em></span>
+            <input id="insLoopCount" type="number" min="1" step="1" placeholder="∞" />
+          </label>
+          <label class="field" id="loopCrossfadeField" hidden>
+            <span>Crossfade (s) <em>(0 = uit)</em></span>
+            <input id="insLoopCrossfade" type="number" min="0" step="0.1" placeholder="0" />
+          </label>
+          <label class="switch inspector-switch">
+            <input id="insAutoContinue" type="checkbox" />
+            <span class="switch-track"></span>
+            <span class="switch-label">Auto-doorgaan<em>Start de volgende cue na afloop</em></span>
+          </label>
+          <label class="field" id="autoContinueField" hidden>
+            <span>Na (s)</span>
+            <input id="insAutoDelay" type="number" min="0" step="0.5" placeholder="1" />
+          </label>
+          <div class="inspector-actions">
+            <button id="moveUpBtn" class="btn" title="Omhoog">↑</button>
+            <button id="moveDownBtn" class="btn" title="Omlaag">↓</button>
+            <button id="deleteBtn" class="btn danger" title="Verwijder (Delete)">Verwijder</button>
+          </div>
+        </div>
+      </aside>
+    </main>
+
+    <footer class="statusbar">
+      <div class="transport-bar">
+        <button id="playPauseBtn" class="tp-btn" title="Afspelen / pauze" aria-label="Afspelen of pauze">
+          <svg class="ic-play" viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+          <svg class="ic-pause" viewBox="0 0 24 24" width="16" height="16" fill="currentColor" hidden><path d="M6 5h4v14H6zM14 5h4v14h-4z"/></svg>
+        </button>
+        <span id="tpCurrent" class="tp-time">0:00</span>
+        <input id="seek" class="seek" type="range" min="0" max="1000" step="1" value="0" aria-label="Afspeelpositie" />
+        <span id="tpDuration" class="tp-time">0:00</span>
+        <span id="tpName" class="tp-name"></span>
+        <span id="modeBadge" class="mode-badge" hidden>Single cue</span>
+      </div>
+    </footer>
+
+    <div id="dropOverlay" class="drop-overlay">Laat los om toe te voegen</div>
+
+    <!-- Instellingen-popup -->
+    <div id="settingsModal" class="modal" hidden>
+      <div class="modal-backdrop" data-close></div>
+      <div class="modal-card" role="dialog" aria-modal="true" aria-label="Instellingen">
+        <div class="modal-head">
+          <h2>Instellingen</h2>
+          <button class="modal-close" data-close aria-label="Sluiten">×</button>
+        </div>
+
+        <div class="tabs" role="tablist">
+          <button class="tab active" data-tab="play" role="tab">Afspelen</button>
+          <button class="tab" data-tab="keys" role="tab">Sneltoetsen</button>
+          <button class="tab" data-tab="project" role="tab">Project</button>
+        </div>
+
+        <div class="modal-body">
+          <div class="tab-panel" data-panel="play">
+            <label class="field"><span>Standaard fade-in (s)</span><input id="setFadeIn" type="number" min="0" step="0.5" /></label>
+            <label class="field"><span>Standaard fade-uit (s)</span><input id="setFadeOut" type="number" min="0" step="0.5" /></label>
+            <label class="switch">
+              <input id="setSingleCue" type="checkbox" />
+              <span class="switch-track"></span>
+              <span class="switch-label">Single cue-modus<em>Slechts één cue tegelijk; een nieuwe cue faadt de vorige uit.</em></span>
+            </label>
+            <label class="switch">
+              <input id="setBlockKeys" type="checkbox" />
+              <span class="switch-track"></span>
+              <span class="switch-label">Browser-sneltoetsen blokkeren<em>Voorkomt o.a. Ctrl/Cmd+R, +S, +F. Enkele (Cmd+W/Q/T) kan de browser niet blokkeren.</em></span>
+            </label>
+
+            <div class="settings-lock">
+              <p id="lockStatusNote" class="settings-note"></p>
+              <button id="passwordBtn" class="btn">Wachtwoord instellen…</button>
+            </div>
+          </div>
+
+          <div class="tab-panel" data-panel="keys" hidden>
+            <div class="preset-row">
+              <span class="preset-label">Preset</span>
+              <button class="btn" data-preset="default">Standaard</button>
+              <button class="btn" data-preset="vlc">VLC</button>
+            </div>
+            <div class="keybind-list" id="keybindList"></div>
+            <p class="settings-note">Klik op een toets om 'm opnieuw in te stellen. Esc annuleert het instellen.</p>
+            <div class="settings-actions">
+              <button id="saveKeysBtn" class="btn">Preset opslaan…</button>
+              <button id="openKeysBtn" class="btn">Preset openen…</button>
+              <input id="keysInput" type="file" accept=".webqlabkeys,application/json" hidden />
+            </div>
+          </div>
+
+          <div class="tab-panel" data-panel="project" hidden>
+            <p class="settings-note">Bewaar of open een volledige show — volgorde, de audio zelf én de instellingen — als één bestand.</p>
+            <label class="switch">
+              <input id="setSaveKeybinds" type="checkbox" />
+              <span class="switch-track"></span>
+              <span class="switch-label">Sneltoetsen meenemen<em>Slaat je huidige sneltoetsen mee op in het projectbestand.</em></span>
+            </label>
+            <div class="settings-actions">
+              <button id="newProjectBtn" class="btn">Nieuw…</button>
+              <button id="saveProjectBtn" class="btn primary">Opslaan…</button>
+              <button id="openProjectBtn" class="btn">Openen…</button>
+              <input id="projectInput" type="file" accept=".webqlab,application/octet-stream" hidden />
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Bevestigings-popup (custom, i.p.v. window.confirm) -->
+    <div id="confirmModal" class="modal" hidden>
+      <div class="modal-backdrop" data-confirm-cancel></div>
+      <div class="modal-card confirm-card" role="dialog" aria-modal="true" aria-labelledby="confirmTitle">
+        <div class="modal-head">
+          <h2 id="confirmTitle">Bevestigen</h2>
+        </div>
+        <div class="modal-body">
+          <p id="confirmMessage" class="confirm-message"></p>
+          <div class="confirm-actions">
+            <button id="confirmCancel" class="btn" data-confirm-cancel>Annuleren</button>
+            <button id="confirmAlt" class="btn" hidden>Niet opslaan</button>
+            <button id="confirmOk" class="btn primary">Bevestigen</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Wachtwoord-dialog (vergrendelen/ontgrendelen) -->
+    <div id="promptModal" class="modal" hidden>
+      <div class="modal-backdrop" data-prompt-cancel></div>
+      <div class="modal-card confirm-card" role="dialog" aria-modal="true" aria-labelledby="promptTitle">
+        <div class="modal-head"><h2 id="promptTitle">Wachtwoord</h2></div>
+        <div class="modal-body">
+          <p id="promptMessage" class="confirm-message"></p>
+          <input id="promptInput" type="password" class="prompt-input" autocomplete="off" />
+          <p id="promptError" class="prompt-error" hidden></p>
+          <div class="confirm-actions">
+            <button class="btn" data-prompt-cancel>Annuleren</button>
+            <button id="promptOk" class="btn primary">OK</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <script type="module" src="src/app.js"></script>
+  </body>
+</html>
