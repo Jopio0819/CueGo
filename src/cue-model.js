@@ -20,6 +20,13 @@ export function titleNumber(name) {
   return m ? parseInt(m[0], 10) : Infinity;
 }
 
+function compareByTitleNumber(a, b) {
+  const na = titleNumber(a.name);
+  const nb = titleNumber(b.name);
+  if (na !== nb) return na - nb;
+  return a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' });
+}
+
 export function createCue(file) {
   return {
     id: uuid(),
@@ -103,15 +110,21 @@ export class CueList {
     this.selectedIndex = newIdx;
   }
 
-  // Sorteer op het nummer in de titel (dan alfanumeriek). Gebruikt bij importeren.
+  // Sorteer de hele lijst op het nummer in de titel (dan alfanumeriek).
   sortByTitleNumber() {
     const selId = this.selected?.id;
-    this.cues.sort((a, b) => {
-      const na = titleNumber(a.name);
-      const nb = titleNumber(b.name);
-      if (na !== nb) return na - nb;
-      return a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' });
-    });
+    this.cues.sort(compareByTitleNumber);
+    if (selId) this.selectedIndex = this.cues.findIndex((c) => c.id === selId);
+  }
+
+  // Sorteer alleen de nieuw toegevoegde cues (vanaf fromIndex) onderaan, zodat de
+  // bestaande volgorde ongemoeid blijft. Gebruikt bij importeren.
+  sortTailByTitleNumber(fromIndex) {
+    if (fromIndex >= this.cues.length) return;
+    const selId = this.selected?.id;
+    const head = this.cues.slice(0, fromIndex);
+    const tail = this.cues.slice(fromIndex).sort(compareByTitleNumber);
+    this.cues = head.concat(tail);
     if (selId) this.selectedIndex = this.cues.findIndex((c) => c.id === selId);
   }
 

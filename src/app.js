@@ -13,7 +13,7 @@ let anchorIndex = -1;
 
 // Instellingen (persist in localStorage).
 const SETTINGS_KEY = 'webqlab.settings.v1';
-const defaultSettings = { defaultFadeIn: 0, escFade: 3, singleCueMode: false, blockBrowserKeys: true };
+const defaultSettings = { defaultFadeIn: 0, escFade: 3, singleCueMode: false, blockBrowserKeys: true, inspectorHidden: false };
 const settings = { ...defaultSettings, ...loadSettings() };
 
 function loadSettings() {
@@ -37,7 +37,7 @@ const KEY_ACTIONS = [
 ];
 const KEY_PRESETS = {
   default: { go: ' ', playPause: '', selectUp: 'ArrowUp', selectDown: 'ArrowDown', selectNext: '', fadeOut: 'Escape', delete: 'Backspace', fullscreen: 'f' },
-  vlc: { go: '', playPause: ' ', selectUp: 'ArrowUp', selectDown: 'ArrowDown', selectNext: '', fadeOut: 'Escape', delete: 'Backspace', fullscreen: 'f' },
+  vlc: { go: 'Enter', playPause: ' ', selectUp: 'ArrowUp', selectDown: 'ArrowDown', selectNext: '', fadeOut: 'Escape', delete: 'Backspace', fullscreen: 'f' },
 };
 const keybinds = { ...KEY_PRESETS.default, ...loadKeybinds() };
 
@@ -199,17 +199,78 @@ function syncInspector() {
 
 function persist() { saveMeta(cues.cues); }
 
+// Pas fn toe op elke geselecteerde cue (of op de primaire als er niets in de set staat).
+function applyToSelected(fn) {
+  const ids = selection.size ? [...selection] : (cues.selected ? [cues.selected.id] : []);
+  for (const id of ids) { const c = cues.getById(id); if (c) fn(c); }
+}
+
+// Custom bevestigings-dialog (in plaats van window.confirm). Geeft een Promise<boolean>.
+function customConfirm(message, { title = 'Bevestigen', okLabel = 'Bevestigen' } = {}) {
+  const modal = $('confirmModal');
+  $('confirmTitle').textContent = title;
+  $('confirmMessage').textContent = message;
+  $('confirmOk').textContent = okLabel;
+  modal.hidden = false;
+  void modal.offsetWidth; // forceer reflow → fade/scale-in
+  modal.classList.add('open');
+
+  return new Promise((resolve) => {
+    const finish = (result) => {
+      window.removeEventListener('keydown', onKey, true);
+      $('confirmOk').removeEventListener('click', onOk);
+      modal.querySelectorAll('[data-confirm-cancel]').forEach((el) => el.removeEventListener('click', onCancel));
+      modal.classList.remove('open');
+      setTimeout(() => { modal.hidden = true; }, 200);
+      resolve(result);
+    };
+    const onOk = () => finish(true);
+    const onCancel = () => finish(false);
+    const onKey = (e) => {
+      if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); onCancel(); }
+      else if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); onOk(); }
+    };
+    $('confirmOk').addEventListener('click', onOk);
+    modal.querySelectorAll('[data-confirm-cancel]').forEach((el) => el.addEventListener('click', onCancel));
+    window.addEventListener('keydown', onKey, true); // capture: onderschep vóór globale sneltoetsen
+    $('confirmOk').focus();
+  });
+}
+
+// Naam/Nr.: bij meerdere geselecteerd eerst waarschuwen voor je het op allemaal toepast.
+// (De primaire cue is tijdens het typen al bijgewerkt.)
+async function maybePropagate(field, value, { noun, title }) {
+  if (selection.size <= 1) return;
+  const ok = await customConfirm(
+    `Je hebt ${selection.size} cues geselecteerd. Wil je ${noun} van allemaal wijzigen naar "${value}"?`,
+    { title, okLabel: `Op alle ${selection.size} toepassen` }
+  );
+  if (!ok) return;
+  applyToSelected((c) => { c[field] = value; });
+  render();
+  syncInspector();
+  persist();
+}
+
 function bindInspector() {
+  // Naam & Nr.: live alleen op de primaire cue; bij bevestigen (blur/Enter) met een
+  // meervoudige selectie eerst een waarschuwingsprompt.
   $('insNumber').addEventListener('input', (e) => withSelected((c) => { c.number = e.target.value; render(); persist(); }));
+  $('insNumber').addEventListener('change', (e) => maybePropagate('number', e.target.value.trim(), { noun: 'het nummer', title: 'Nummer wijzigen' }));
   $('insName').addEventListener('input', (e) => withSelected((c) => { c.name = e.target.value; render(); persist(); }));
-  $('insFadeIn').addEventListener('input', (e) => withSelected((c) => { c.fadeIn = num(e.target.value, 0); render(); persist(); }));
-  $('insFadeOut').addEventListener('input', (e) => withSelected((c) => { c.fadeOut = num(e.target.value, 0); render(); persist(); }));
-  $('insVolume').addEventListener('input', (e) => withSelected((c) => {
-    c.volume = num(e.target.value, 1);
-    $('insVolumeVal').textContent = `${Math.round(c.volume * 100)}%`;
+  $('insName').addEventListener('change', (e) => maybePropagate('name', e.target.value, { noun: 'de naam', title: 'Naam wijzigen' }));
+
+  // Fades & volume: meteen op álle geselecteerde cues (zonder prompt).
+  $('insFadeIn').addEventListener('input', (e) => { const v = num(e.target.value, 0); applyToSelected((c) => { c.fadeIn = v; }); render(); persist(); });
+  $('insFadeOut').addEventListener('input', (e) => { const v = num(e.target.value, 0); applyToSelected((c) => { c.fadeOut = v; }); render(); persist(); });
+  $('insVolume').addEventListener('input', (e) => {
+    const v = num(e.target.value, 1);
+    applyToSelected((c) => { c.volume = v; });
+    $('insVolumeVal').textContent = `${Math.round(v * 100)}%`;
     render();
     persist();
-  }));
+  });
+
   $('moveUpBtn').addEventListener('click', () => withSelected((c) => { cues.move(c.id, -1); render(); persist(); }));
   $('moveDownBtn').addEventListener('click', () => withSelected((c) => { cues.move(c.id, 1); render(); persist(); }));
   $('deleteBtn').addEventListener('click', deleteSelected);
@@ -342,6 +403,11 @@ function setPlayIcon(isPlaying) {
   playPauseBtn.querySelector('.ic-pause').hidden = !isPlaying;
 }
 
+// Vul het afgespeelde deel van de seek-slider (0..1000 → %).
+function updateSeekFill() {
+  seekEl.style.setProperty('--seek-pct', `${(seekEl.value / 1000) * 100}%`);
+}
+
 function syncTransport() {
   const cue = transportCue();
   if (!cue) {
@@ -349,6 +415,7 @@ function syncTransport() {
     tpCurrent.textContent = '0:00';
     tpDuration.textContent = '0:00';
     seekEl.value = 0;
+    updateSeekFill();
     setPlayIcon(false);
     return;
   }
@@ -365,7 +432,7 @@ function syncTransportProgress() {
   const dur = engine.duration(cue.id) || 0;
   const pos = engine.position(cue.id);
   tpCurrent.textContent = fmtTime(pos);
-  if (!seeking) seekEl.value = dur ? Math.round((pos / dur) * 1000) : 0;
+  if (!seeking) { seekEl.value = dur ? Math.round((pos / dur) * 1000) : 0; updateSeekFill(); }
   setPlayIcon(engine.isPlaying(cue.id));
 }
 
@@ -390,6 +457,7 @@ function bindTransportBar() {
 
   seekEl.addEventListener('input', () => {
     seeking = true;
+    updateSeekFill();
     const cue = transportCue();
     if (!cue) return;
     const dur = engine.duration(cue.id) || 0;
@@ -411,6 +479,7 @@ function bindTransportBar() {
 // --- Bestanden inladen -----------------------------------------------------
 
 function addFiles(fileList) {
+  const startLen = cues.cues.length; // nieuwe cues komen hierna
   let added = 0;
   for (const file of fileList) {
     if (!isAudioFile(file)) continue;
@@ -420,8 +489,10 @@ function addFiles(fileList) {
     added += 1;
   }
   if (added > 0) {
-    cues.sortByTitleNumber(); // sorteer op nummer in de titel bij importeren
-    selectOnly(cues.cues[0].id, 0);
+    // Alleen de zojuist toegevoegde bestanden sorteren en onderaan laten staan;
+    // de bestaande volgorde blijft ongemoeid.
+    cues.sortTailByTitleNumber(startLen);
+    selectOnly(cues.cues[startLen].id, startLen); // selecteer het (eerste) nieuwe bestand
     render();
     syncInspector();
     persist();
@@ -822,7 +893,19 @@ function toggleFullscreen() {
   else document.exitFullscreen?.();
 }
 
-function bindTopbar() { $('fsBtn').addEventListener('click', toggleFullscreen); }
+function applyInspectorVisibility() {
+  document.body.classList.toggle('inspector-collapsed', settings.inspectorHidden);
+  $('inspectorToggle').classList.toggle('active', !settings.inspectorHidden);
+}
+
+function bindTopbar() {
+  $('fsBtn').addEventListener('click', toggleFullscreen);
+  $('inspectorToggle').addEventListener('click', () => {
+    settings.inspectorHidden = !settings.inspectorHidden;
+    saveSettings();
+    applyInspectorVisibility();
+  });
+}
 
 async function restoreFromStorage() {
   const meta = loadMeta();
@@ -853,6 +936,7 @@ bindInspector();
 bindSettings();
 bindKeyboard();
 applySingleCueBadge();
+applyInspectorVisibility();
 render();
 syncInspector();
 restoreFromStorage();
