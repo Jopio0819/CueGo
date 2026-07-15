@@ -87,7 +87,7 @@ function render() {
     tr.innerHTML = `
       <td class="col-num">${cue.number ? escapeHtml(cue.number) : i + 1}</td>
       <td class="col-status"></td>
-      <td class="col-name">${escapeHtml(cue.name)}</td>
+      <td class="col-name">${escapeHtml(cue.name)}${cue.loop ? ` <span class="loop-badge">⟳${escapeHtml(cue.loopCount || '∞')}</span>` : ''}</td>
       <td class="col-time">${fmt(cue.fadeIn)}s</td>
       <td class="col-time">${fmt(cue.fadeOut)}s</td>
       <td class="col-vol">${Math.round(cue.volume * 100)}%</td>
@@ -195,6 +195,9 @@ function syncInspector() {
   $('insFadeOut').value = cue.fadeOut;
   $('insVolume').value = cue.volume;
   $('insVolumeVal').textContent = `${Math.round(cue.volume * 100)}%`;
+  $('insLoop').checked = !!cue.loop;
+  $('insLoopCount').value = cue.loopCount || '';
+  $('loopCountField').hidden = !cue.loop;
 }
 
 function persist() { saveMeta(cues.cues); }
@@ -267,6 +270,21 @@ function bindInspector() {
     const v = num(e.target.value, 1);
     applyToSelected((c) => { c.volume = v; });
     $('insVolumeVal').textContent = `${Math.round(v * 100)}%`;
+    render();
+    persist();
+  });
+
+  // Loop & aantal keer: op alle geselecteerde cues (geen prompt).
+  $('insLoop').addEventListener('change', (e) => {
+    const on = e.target.checked;
+    applyToSelected((c) => { c.loop = on; });
+    $('loopCountField').hidden = !on;
+    render();
+    persist();
+  });
+  $('insLoopCount').addEventListener('input', (e) => {
+    const val = e.target.value.trim();
+    applyToSelected((c) => { c.loopCount = val; });
     render();
     persist();
   });
@@ -900,9 +918,27 @@ function captureKey(e) {
 // --- Init ------------------------------------------------------------------
 
 function toggleFullscreen() {
-  if (!document.fullscreenElement) document.documentElement.requestFullscreen?.().catch(() => {});
-  else document.exitFullscreen?.();
+  if (!document.fullscreenElement) {
+    const p = document.documentElement.requestFullscreen?.();
+    if (p) p.then(lockEscape).catch(() => {});
+  } else {
+    document.exitFullscreen?.();
+  }
 }
+
+// Vang Esc af in fullscreen (Edge/Chrome) zodat 'ie niet meteen fullscreen verlaat,
+// maar de fade-uit-actie triggert. Fullscreen verlaten: Esc ingedrukt houden.
+function lockEscape() {
+  try { navigator.keyboard?.lock?.(['Escape']).catch(() => {}); } catch { /* niet ondersteund */ }
+}
+function unlockKeyboard() {
+  try { navigator.keyboard?.unlock?.(); } catch { /* niet ondersteund */ }
+}
+
+// Bij het verlaten van fullscreen (op welke manier dan ook) de keyboard-lock opheffen.
+document.addEventListener('fullscreenchange', () => {
+  if (!document.fullscreenElement) unlockKeyboard();
+});
 
 function applyInspectorVisibility() {
   document.body.classList.toggle('inspector-collapsed', settings.inspectorHidden);
@@ -932,6 +968,8 @@ async function restoreFromStorage() {
       fadeIn: m.fadeIn ?? 0,
       fadeOut: m.fadeOut ?? 3,
       volume: m.volume ?? 1,
+      loop: !!m.loop,
+      loopCount: m.loopCount || '',
     });
   }
   if (cues.cues.length) selectOnly(cues.cues[0].id, 0);

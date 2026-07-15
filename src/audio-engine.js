@@ -59,10 +59,7 @@ export class AudioEngine {
     const buffer = await this.decode(cue);
     this._discard(cue.id); // verwijder bestaande voice zonder callback
 
-    const source = ctx.createBufferSource();
-    source.buffer = buffer;
     const gain = ctx.createGain();
-    source.connect(gain);
     gain.connect(this.masterGain);
 
     const now = ctx.currentTime;
@@ -76,20 +73,42 @@ export class AudioEngine {
       gain.gain.setValueAtTime(target, now);
     }
 
+    const { plays, infinite } = loopSpec(cue);
     const voice = {
-      cueId: cue.id, cue, source, gain, buffer,
-      startedAt: now, offset, paused: false, ended: false, onEnded,
+      cueId: cue.id, cue, source: null, gain, buffer,
+      startedAt: now, offset, paused: false, ended: false, fading: false,
+      onEnded, playsLeft: plays, infinite,
     };
-    source.onended = () => {
-      if (voice.ended) return; // al opgeruimd door stop/seek/herstart
-      voice.ended = true;
-      if (this.voices.get(cue.id) === voice) this.voices.delete(cue.id);
-      // 'natural' = echt uitgespeeld (niet weggefade door Esc/verwijderen).
-      if (onEnded) onEnded(cue, { natural: !voice.fading });
-    };
-    source.start(now, offset);
+    this._startVoiceSource(voice, offset);
     this.voices.set(cue.id, voice);
     return voice;
+  }
+
+  // (Her)start de bronnode van een voice. Bij oneindige loop → source.loop (naadloos);
+  // bij een eindig aantal → herstart op het natuurlijke einde tot het aantal op is.
+  _startVoiceSource(voice, offset) {
+    const ctx = this.ctx;
+    const source = ctx.createBufferSource();
+    source.buffer = voice.buffer;
+    source.loop = voice.infinite; // alleen naadloos loopen bij oneindig
+    source.connect(voice.gain);
+    source.onended = () => {
+      if (voice.ended) return; // al opgeruimd door stop/seek/herstart
+      // Eindig loopen: nog beurten over en niet weggefade → volgende iteratie.
+      if (!voice.fading && !voice.infinite && voice.playsLeft > 1) {
+        voice.playsLeft -= 1;
+        voice.startedAt = ctx.currentTime;
+        voice.offset = 0;
+        this._startVoiceSource(voice, 0);
+        return;
+      }
+      voice.ended = true;
+      if (this.voices.get(voice.cueId) === voice) this.voices.delete(voice.cueId);
+      // 'natural' = echt uitgespeeld (niet weggefade door Esc/verwijderen).
+      if (voice.onEnded) voice.onEnded(voice.cue, { natural: !voice.fading });
+    };
+    voice.source = source;
+    source.start(ctx.currentTime, offset);
   }
 
   // Huidige afspeelpositie in seconden (werkt tijdens spelen én gepauzeerd).
@@ -97,7 +116,9 @@ export class AudioEngine {
     const v = this.voices.get(cueId);
     if (!v) return 0;
     if (v.paused) return v.offset;
-    return Math.min(v.buffer.duration, v.offset + (this.ctx.currentTime - v.startedAt));
+    const pos = v.offset + (this.ctx.currentTime - v.startedAt);
+    if (v.infinite && v.buffer.duration) return pos % v.buffer.duration; // wrap bij loop
+    return Math.min(v.buffer.duration, pos);
   }
 
   isPlaying(cueId) {
@@ -222,4 +243,13 @@ export class AudioEngine {
 function clamp01(v) {
   if (Number.isNaN(v)) return 1;
   return Math.min(1, Math.max(0, v));
+}
+
+// Bepaal hoe vaak een cue speelt. Loop uit → 1×. Loop aan met getal N>0 → N×.
+// Loop aan zonder (geldig) getal → oneindig (naadloos).
+function loopSpec(cue) {
+  if (!cue.loop) return { plays: 1, infinite: false };
+  const n = parseInt(cue.loopCount, 10);
+  if (Number.isFinite(n) && n > 0) return { plays: n, infinite: false };
+  return { plays: Infinity, infinite: true };
 }

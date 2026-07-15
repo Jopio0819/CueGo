@@ -29,6 +29,19 @@ html, body {
 
 body { display: flex; flex-direction: column; height: 100vh; }
 
+/* Donkere scrollbars (Edge/Chrome via ::-webkit, Firefox via scrollbar-*) */
+* { scrollbar-width: thin; scrollbar-color: var(--line-strong) transparent; }
+::-webkit-scrollbar { width: 12px; height: 12px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: var(--line-strong);
+  border-radius: 999px;
+  border: 3px solid transparent;
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover { background: #454b59; }
+::-webkit-scrollbar-corner { background: transparent; }
+
 /* ---------- Buttons ---------- */
 .btn {
   display: inline-flex;
@@ -232,6 +245,19 @@ input[type="range"] { width: 100%; accent-color: var(--accent); cursor: pointer;
 
 .inspector-actions { display: flex; gap: 8px; margin-top: 8px; }
 .inspector-actions .btn { flex: 1; }
+.inspector-switch { margin: 2px 0 14px; }
+.inspector-switch .switch-label { font-size: 13px; }
+#loopCountField .field > span, #loopCountField span { display: block; }
+#loopCountField em { color: var(--faint); font-style: normal; }
+
+/* Loop-badge in de cue-lijst */
+.loop-badge {
+  margin-left: 7px;
+  font-size: 11px;
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+  vertical-align: middle;
+}
 
 /* ---------- Statusbar / transport ---------- */
 .statusbar { padding: 12px 18px; background: var(--panel); border-top: 1px solid var(--line); }

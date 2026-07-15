@@ -36,6 +36,8 @@ export function createCue(file) {
     fadeIn: 0, // seconden
     fadeOut: 3, // seconden (per-cue default)
     volume: 1, // 0..1
+    loop: false, // herhalen?
+    loopCount: '', // aantal keer afspelen; leeg = oneindig
   };
 }
 

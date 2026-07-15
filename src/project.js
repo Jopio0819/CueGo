@@ -18,6 +18,8 @@ export async function exportProject(cues, settings, keybinds = null) {
       fadeIn: c.fadeIn,
       fadeOut: c.fadeOut,
       volume: c.volume,
+      loop: !!c.loop,
+      loopCount: c.loopCount || '',
       fileName: c.file.name,
       fileType: c.file.type,
       size: buf.byteLength,
@@ -45,7 +47,7 @@ export async function importProject(arrayBuffer) {
     const slice = arrayBuffer.slice(offset, offset + m.size);
     offset += m.size;
     const file = new File([slice], m.fileName || `${m.name}.audio`, { type: m.fileType || 'audio/*' });
-    cues.push({ id: m.id, number: m.number || '', name: m.name, fadeIn: m.fadeIn, fadeOut: m.fadeOut, volume: m.volume, file });
+    cues.push({ id: m.id, number: m.number || '', name: m.name, fadeIn: m.fadeIn, fadeOut: m.fadeOut, volume: m.volume, loop: !!m.loop, loopCount: m.loopCount || '', file });
   }
   return { settings: header.settings || {}, keybinds: header.keybinds || null, cues };
 }

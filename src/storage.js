@@ -62,6 +62,8 @@ export function saveMeta(cues) {
     fadeIn: c.fadeIn,
     fadeOut: c.fadeOut,
     volume: c.volume,
+    loop: !!c.loop,
+    loopCount: c.loopCount || '',
   }));
   try {
     localStorage.setItem(META_KEY, JSON.stringify(meta));

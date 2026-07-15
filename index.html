@@ -79,6 +79,15 @@
             <span>Volume <em id="insVolumeVal"></em></span>
             <input id="insVolume" type="range" min="0" max="1" step="0.01" />
           </label>
+          <label class="switch inspector-switch">
+            <input id="insLoop" type="checkbox" />
+            <span class="switch-track"></span>
+            <span class="switch-label">Loop</span>
+          </label>
+          <label class="field" id="loopCountField" hidden>
+            <span>Aantal keer <em>(leeg = oneindig)</em></span>
+            <input id="insLoopCount" type="number" min="1" step="1" placeholder="∞" />
+          </label>
           <div class="inspector-actions">
             <button id="moveUpBtn" class="btn" title="Omhoog">↑</button>
             <button id="moveDownBtn" class="btn" title="Omlaag">↓</button>
