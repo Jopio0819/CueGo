@@ -82,6 +82,24 @@ body { display: flex; flex-direction: column; height: 100vh; }
   min-height: 52px;
 }
 .logo { display: flex; align-items: center; }
+.project-title {
+  margin-left: 14px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+  padding: 4px 8px;
+  border-radius: 6px;
+  cursor: text;
+  max-width: 320px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  outline: none;
+}
+.project-title:hover { background: var(--panel-2); }
+.project-title[contenteditable="true"] { background: var(--bg); box-shadow: inset 0 0 0 1px var(--accent); cursor: text; }
+body.locked .project-title { cursor: default; }
+body.locked .project-title:hover { background: transparent; }
 .logo img {
   width: 46px;
   height: 46px;
@@ -425,6 +443,8 @@ body.dragging .drop-overlay { display: flex; }
 .settings-actions { display: flex; gap: 10px; margin-top: 4px; }
 .tab-panel[data-panel="project"] .switch { margin: 8px 0 18px; }
 .switch + .switch { margin-top: 14px; }
+.settings-lock { margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--line); }
+.settings-lock .settings-note { margin-bottom: 10px; }
 
 /* Keybind editor */
 .preset-row { display: flex; align-items: center; gap: 8px; margin-bottom: 14px; }
@@ -462,6 +482,31 @@ body.dragging .drop-overlay { display: flex; }
   border-radius: 4px;
   color: var(--text);
 }
+
+/* Wachtwoord-dialog */
+#promptModal { z-index: 95; }
+.prompt-input {
+  width: 100%;
+  padding: 9px 11px;
+  font-size: 14px;
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  margin-bottom: 10px;
+}
+.prompt-input:focus { outline: none; border-color: var(--accent); }
+.prompt-error { color: var(--danger); font-size: 12px; margin: 0 0 12px; }
+
+/* Vergrendeld: bewerkbare controls uitgeschakeld tonen. Afspelen blijft werken. */
+.icon-btn.locked-on { color: var(--danger); border-color: rgba(255, 92, 92, 0.4); background: rgba(255, 92, 92, 0.1); }
+body.locked input:disabled,
+body.locked button:disabled,
+body.locked .switch input:disabled + .switch-track {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+body.locked .cuelist tbody tr { cursor: default; }
 
 /* Bevestigings-dialog */
 #confirmModal { z-index: 90; }

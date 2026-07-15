@@ -68,6 +68,8 @@ export function saveMeta(cues) {
     loopCrossfade: c.loopCrossfade || 0,
     inPoint: c.inPoint || 0,
     outPoint: c.outPoint || '',
+    autoContinue: !!c.autoContinue,
+    autoContinueDelay: c.autoContinueDelay ?? 1,
   }));
   try {
     localStorage.setItem(META_KEY, JSON.stringify(meta));

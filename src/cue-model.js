@@ -42,6 +42,8 @@ export function createCue(file) {
     loopCrossfade: 0, // crossfade tussen loop-iteraties in seconden (0 = uit)
     inPoint: 0, // startpunt in seconden
     outPoint: '', // eindpunt in seconden; leeg = einde van de audio
+    autoContinue: false, // na afloop automatisch de volgende cue starten
+    autoContinueDelay: 1, // wachttijd (s) voor auto-doorgaan
   };
 }
 

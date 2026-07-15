@@ -35,13 +35,14 @@ const KEY_ACTIONS = [
   { id: 'selectUp', label: 'Selecteer omhoog' },
   { id: 'selectDown', label: 'Selecteer omlaag' },
   { id: 'selectNext', label: 'Selecteer volgende (niet spelen)' },
+  { id: 'fadeInGo', label: 'Fade-in starten (transition)' },
   { id: 'fadeOut', label: 'Fade uit (2× = direct stop)' },
   { id: 'delete', label: 'Verwijder selectie' },
   { id: 'fullscreen', label: 'Volledig scherm' },
 ];
 const KEY_PRESETS = {
-  default: { go: ' ', playPause: '', selectUp: 'ArrowUp', selectDown: 'ArrowDown', selectNext: '', fadeOut: 'Escape', delete: 'Backspace', fullscreen: 'f' },
-  vlc: { go: 'Enter', playPause: ' ', selectUp: 'ArrowUp', selectDown: 'ArrowDown', selectNext: '', fadeOut: 'Escape', delete: 'Backspace', fullscreen: 'f' },
+  default: { go: ' ', playPause: '', selectUp: 'ArrowUp', selectDown: 'ArrowDown', selectNext: '', fadeInGo: 'i', fadeOut: 'Escape', delete: 'Backspace', fullscreen: 'f' },
+  vlc: { go: 'Enter', playPause: ' ', selectUp: 'ArrowUp', selectDown: 'ArrowDown', selectNext: '', fadeInGo: 'i', fadeOut: 'Escape', delete: 'Backspace', fullscreen: 'f' },
 };
 const keybinds = { ...KEY_PRESETS.default, ...loadKeybinds() };
 
@@ -87,7 +88,7 @@ function render() {
   cues.cues.forEach((cue, i) => {
     const tr = document.createElement('tr');
     tr.dataset.id = cue.id;
-    tr.draggable = true;
+    tr.draggable = !locked;
     if (selection.has(cue.id)) tr.classList.add('selected');
     if (engine.isPlaying(cue.id)) tr.classList.add('playing');
     else if (engine.isPaused(cue.id)) tr.classList.add('paused');
@@ -95,7 +96,7 @@ function render() {
     tr.innerHTML = `
       <td class="col-num">${cue.number ? escapeHtml(cue.number) : i + 1}</td>
       <td class="col-status"></td>
-      <td class="col-name">${escapeHtml(cue.name)}${cue.loop ? ` <span class="loop-badge">⟳${escapeHtml(cue.loopCount || '∞')}</span>` : ''}</td>
+      <td class="col-name">${escapeHtml(cue.name)}${cue.loop ? ` <span class="loop-badge">⟳${escapeHtml(cue.loopCount || '∞')}</span>` : ''}${cue.autoContinue ? ' <span class="loop-badge" title="Auto-doorgaan">↳</span>' : ''}</td>
       <td class="col-time">${fmt(cue.fadeIn)}s</td>
       <td class="col-time">${fmt(cue.fadeOut)}s</td>
       <td class="col-vol">${Math.round(cue.volume * 100)}%</td>
@@ -109,7 +110,7 @@ function render() {
     });
     // Dubbelklik op het #-vakje = nummer direct bewerken (niet starten).
     const numCell = tr.querySelector('.col-num');
-    numCell.addEventListener('dblclick', (e) => { e.stopPropagation(); startInlineNumberEdit(numCell, cue); });
+    numCell.addEventListener('dblclick', (e) => { e.stopPropagation(); if (!locked) startInlineNumberEdit(numCell, cue); });
     bindRowDrag(tr, cue.id);
     cueBody.appendChild(tr);
   });
@@ -211,6 +212,9 @@ function syncInspector() {
   $('loopCrossfadeField').hidden = !cue.loop;
   $('insInPoint').value = cue.inPoint || '';
   $('insOutPoint').value = cue.outPoint || '';
+  $('insAutoContinue').checked = !!cue.autoContinue;
+  $('insAutoDelay').value = cue.autoContinueDelay ?? 1;
+  $('autoContinueField').hidden = !cue.autoContinue;
   showInspectorDuration(cue);
   syncPreviewBar();
 }
@@ -229,7 +233,43 @@ function showInspectorDuration(cue) {
     .catch(() => { if (cues.selected === cue) el.textContent = '—'; });
 }
 
-function persist() { saveMeta(cues.cues); }
+let dirty = false; // niet-opgeslagen wijzigingen sinds laatste opslaan/openen/nieuw
+const PROJECT_NAME_KEY = 'webqlab.projectName';
+let projectName = localStorage.getItem(PROJECT_NAME_KEY) || 'Naamloos';
+function persist() { saveMeta(cues.cues); dirty = true; }
+
+function setProjectName(name) {
+  projectName = (name || '').trim() || 'Naamloos';
+  localStorage.setItem(PROJECT_NAME_KEY, projectName);
+  updateProjectTitle();
+}
+function updateProjectTitle() {
+  const el = $('projectTitle');
+  if (el.getAttribute('contenteditable') !== 'true') el.textContent = projectName;
+}
+
+function bindProjectTitle() {
+  const el = $('projectTitle');
+  el.addEventListener('click', () => {
+    if (locked || el.getAttribute('contenteditable') === 'true') return;
+    el.setAttribute('contenteditable', 'true');
+    el.focus();
+    const range = document.createRange();
+    range.selectNodeContents(el);
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(range);
+  });
+  el.addEventListener('keydown', (e) => {
+    e.stopPropagation(); // globale sneltoetsen niet triggeren tijdens typen
+    if (e.key === 'Enter') { e.preventDefault(); el.blur(); }
+    else if (e.key === 'Escape') { e.preventDefault(); el.textContent = projectName; el.blur(); }
+  });
+  el.addEventListener('blur', () => {
+    el.setAttribute('contenteditable', 'false');
+    setProjectName(el.textContent);
+  });
+}
 
 // Pas fn toe op elke geselecteerde cue (of op de primaire als er niets in de set staat).
 function applyToSelected(fn) {
@@ -240,6 +280,8 @@ function applyToSelected(fn) {
 // Custom bevestigings-dialog (in plaats van window.confirm). Geeft een Promise<boolean>.
 function customConfirm(message, { title = 'Bevestigen', okLabel = 'Bevestigen' } = {}) {
   const modal = $('confirmModal');
+  $('confirmAlt').hidden = true; // 3e knop hoort niet bij een gewone bevestiging
+  $('confirmCancel').textContent = 'Annuleren';
   $('confirmTitle').textContent = title;
   $('confirmMessage').textContent = message;
   $('confirmOk').textContent = okLabel;
@@ -342,6 +384,20 @@ function bindInspector() {
     syncPreviewBar();
   });
 
+  // Auto-doorgaan (op alle geselecteerde cues).
+  $('insAutoContinue').addEventListener('change', (e) => {
+    const on = e.target.checked;
+    applyToSelected((c) => { c.autoContinue = on; });
+    $('autoContinueField').hidden = !on;
+    render();
+    persist();
+  });
+  $('insAutoDelay').addEventListener('input', (e) => {
+    const v = Math.max(0, num(e.target.value, 1));
+    applyToSelected((c) => { c.autoContinueDelay = v; });
+    persist();
+  });
+
   $('moveUpBtn').addEventListener('click', () => withSelected((c) => { cues.move(c.id, -1); render(); persist(); }));
   $('moveDownBtn').addEventListener('click', () => withSelected((c) => { cues.move(c.id, 1); render(); persist(); }));
   $('deleteBtn').addEventListener('click', deleteSelected);
@@ -351,6 +407,7 @@ function withSelected(fn) { const cue = cues.selected; if (cue) fn(cue); }
 function num(v, fallback) { const n = parseFloat(v); return Number.isNaN(n) ? fallback : n; }
 
 function deleteSelected() {
+  if (locked) return;
   const ids = selection.size ? [...selection] : (cues.selected ? [cues.selected.id] : []);
   ids.forEach((id) => {
     engine.fadeOutCue(id, 0.05);
@@ -372,8 +429,17 @@ function onCueEnded(cue, info) {
   if (info?.natural && cue) {
     const idx = cues.cues.findIndex((c) => c.id === cue.id);
     if (idx !== -1 && idx + 1 < cues.cues.length) {
-      selectOnly(cues.cues[idx + 1].id, idx + 1);
+      const next = cues.cues[idx + 1];
+      selectOnly(next.id, idx + 1);
       syncInspector();
+      // Auto-doorgaan: na de wachttijd de volgende cue starten (zoals GO).
+      if (cue.autoContinue) {
+        const delay = Math.max(0, parseFloat(cue.autoContinueDelay) || 0);
+        setTimeout(() => {
+          const i = cues.cues.findIndex((c) => c.id === next.id);
+          if (i !== -1) { selectOnly(next.id, i); go(); }
+        }, delay * 1000);
+      }
     }
   }
   render();
@@ -418,6 +484,24 @@ function go() {
   playCue(cue); // herstart als hij al speelt → nooit dubbel
   cues.advance();
   selectOnly(cues.selected.id, cues.selectedIndex);
+  render();
+  syncInspector();
+}
+
+// Transition: druk op 'i' → vraag een fade-in tijd, dan de geselecteerde cue met die
+// fade-in starten (en de selectie doorschuiven, zoals GO).
+async function openFadeInPrompt() {
+  const cue = cues.selected;
+  if (!cue) return;
+  const v = await customPrompt({
+    title: 'Fade-in', message: `Hoe lang moet de fade-in van "${cue.name}" duren (s)?`, okLabel: 'Start',
+    inputType: 'number', defaultValue: String(cue.fadeIn || 2),
+    validate: (x) => (x !== '' && !Number.isNaN(parseFloat(x)) && parseFloat(x) >= 0 ? true : 'Voer een geldig getal in.'),
+  });
+  if (v == null) return;
+  await playCue(cue, { fadeIn: Math.max(0, parseFloat(v) || 0) });
+  cues.advance();
+  if (cues.selected) selectOnly(cues.selected.id, cues.selectedIndex);
   render();
   syncInspector();
 }
@@ -638,6 +722,7 @@ function bindPreviewBar() {
 // --- Bestanden inladen -----------------------------------------------------
 
 function addFiles(fileList) {
+  if (locked) return 0;
   const startLen = cues.cues.length; // nieuwe cues komen hierna
   let added = 0;
   for (const file of fileList) {
@@ -697,7 +782,7 @@ function bindLoaders() {
   const isFileDrag = (e) => e.dataTransfer && [...e.dataTransfer.types].includes('Files');
 
   window.addEventListener('dragover', (e) => {
-    if (!isFileDrag(e)) return; // interne herorden-drag → geen "toevoegen"-overlay
+    if (locked || !isFileDrag(e)) return; // interne herorden-drag of vergrendeld → geen overlay
     e.preventDefault();
     e.dataTransfer.dropEffect = 'copy';
     showDrop();
@@ -706,7 +791,7 @@ function bindLoaders() {
   });
   window.addEventListener('dragend', () => { clearTimeout(dragHideTimer); hideDrop(); });
   window.addEventListener('drop', async (e) => {
-    if (!isFileDrag(e)) return;
+    if (locked || !isFileDrag(e)) return;
     e.preventDefault();
     clearTimeout(dragHideTimer);
     hideDrop();
@@ -810,7 +895,111 @@ function walkEntry(entry, out) {
 
 // --- Instellingen-popup + project opslaan/openen ---------------------------
 
-function isModalOpen() { return !settingsModal.hidden; }
+function isModalOpen() {
+  return !settingsModal.hidden || !$('promptModal').hidden || !$('confirmModal').hidden;
+}
+
+// --- Vergrendeling (zachte lock tegen per ongeluk bewerken) -----------------
+const LOCK_KEY = 'webqlab.lock'; // {salt, hash}
+const LOCKED_KEY = 'webqlab.locked'; // '1' | '0'
+let locked = false;
+
+// Elementen die bij vergrendeling worden uitgeschakeld (afspelen blijft werken).
+const LOCK_EDIT_IDS = [
+  'insNumber', 'insName', 'insFadeIn', 'insFadeOut', 'insFadeOutEnd', 'insVolume', 'insLoop',
+  'insLoopCount', 'insLoopCrossfade', 'insInPoint', 'insOutPoint', 'insAutoContinue', 'insAutoDelay',
+  'moveUpBtn', 'moveDownBtn', 'deleteBtn', 'pickFolderBtn', 'pickFilesBtn',
+  'setFadeIn', 'setFadeOut', 'setSingleCue', 'setBlockKeys', 'setSaveKeybinds', 'openKeysBtn', 'openProjectBtn', 'newProjectBtn',
+];
+
+function hasPassword() { try { return !!JSON.parse(localStorage.getItem(LOCK_KEY)); } catch { return false; } }
+async function sha256Hex(str) {
+  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(str));
+  return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+function randomSalt() {
+  const a = new Uint8Array(16); crypto.getRandomValues(a);
+  return [...a].map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+async function setPassword(pw) {
+  const salt = randomSalt();
+  localStorage.setItem(LOCK_KEY, JSON.stringify({ salt, hash: await sha256Hex(salt + pw) }));
+}
+async function checkPassword(pw) {
+  try {
+    const { salt, hash } = JSON.parse(localStorage.getItem(LOCK_KEY));
+    return (await sha256Hex(salt + pw)) === hash;
+  } catch { return false; }
+}
+
+function setLocked(v) {
+  locked = v;
+  localStorage.setItem(LOCKED_KEY, v ? '1' : '0');
+  applyLockState();
+}
+function applyLockState() {
+  document.body.classList.toggle('locked', locked);
+  LOCK_EDIT_IDS.forEach((id) => { const el = $(id); if (el) el.disabled = locked; });
+  const addToggle = document.querySelector('[data-menu] [data-menu-toggle]');
+  if (addToggle) addToggle.disabled = locked;
+  const lockBtn = $('lockBtn');
+  lockBtn.hidden = !hasPassword(); // geen slot-icoon als er geen wachtwoord is
+  lockBtn.classList.toggle('locked-on', locked);
+  lockBtn.title = locked ? 'Ontgrendelen (bewerken is vergrendeld)' : 'Vergrendelen';
+  lockBtn.querySelector('.ic-locked').hidden = !locked;
+  lockBtn.querySelector('.ic-unlocked').hidden = locked;
+  render(); // draggable-status van rijen bijwerken
+}
+
+// Slot-knop in de balk: alleen (ont)grendelen — het slot is verborgen als er geen
+// wachtwoord is (instellen gebeurt via Instellingen).
+async function toggleLock() {
+  if (!hasPassword()) return;
+  if (locked) {
+    const pw = await customPrompt({
+      title: 'Ontgrendelen', message: 'Voer je wachtwoord in om bewerken te ontgrendelen.', okLabel: 'Ontgrendel',
+      validate: async (v) => ((await checkPassword(v)) ? true : 'Onjuist wachtwoord.'),
+    });
+    if (pw != null) setLocked(false);
+  } else {
+    setLocked(true);
+  }
+}
+
+// Custom wachtwoord-prompt met inline validatie. Geeft Promise<string|null>.
+function customPrompt({ title = 'Invoer', message = '', okLabel = 'OK', inputType = 'password', defaultValue = '', validate } = {}) {
+  const modal = $('promptModal');
+  $('promptTitle').textContent = title;
+  $('promptMessage').textContent = message;
+  const input = $('promptInput'); input.type = inputType; input.value = defaultValue;
+  const err = $('promptError'); err.hidden = true; err.textContent = '';
+  modal.hidden = false; void modal.offsetWidth; modal.classList.add('open');
+  setTimeout(() => { input.focus(); input.select(); }, 0);
+  return new Promise((resolve) => {
+    const done = (val) => {
+      window.removeEventListener('keydown', onKey, true);
+      $('promptOk').removeEventListener('click', onOk);
+      input.removeEventListener('keydown', onInputKey);
+      modal.querySelectorAll('[data-prompt-cancel]').forEach((el) => el.removeEventListener('click', onCancel));
+      modal.classList.remove('open');
+      setTimeout(() => { modal.hidden = true; }, 180);
+      resolve(val);
+    };
+    const submit = async () => {
+      const v = input.value;
+      if (validate) { const r = await validate(v); if (r !== true) { err.textContent = r || 'Ongeldig.'; err.hidden = false; input.select(); return; } }
+      done(v);
+    };
+    const onOk = () => submit();
+    const onCancel = () => done(null);
+    const onKey = (e) => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); done(null); } };
+    const onInputKey = (e) => { e.stopPropagation(); if (e.key === 'Enter') { e.preventDefault(); submit(); } };
+    $('promptOk').addEventListener('click', onOk);
+    modal.querySelectorAll('[data-prompt-cancel]').forEach((el) => el.addEventListener('click', onCancel));
+    window.addEventListener('keydown', onKey, true);
+    input.addEventListener('keydown', onInputKey);
+  });
+}
 function openSettings() {
   syncSettingsForm();
   renderKeybinds();
@@ -835,6 +1024,16 @@ function syncSettingsForm() {
   $('setSingleCue').checked = settings.singleCueMode;
   $('setBlockKeys').checked = settings.blockBrowserKeys;
   $('setSaveKeybinds').checked = settings.saveKeybindsWithProject;
+  updateLockSettingsUI();
+}
+
+// Toon de vergrendel-status en de instellen/verwijderen-knop in de instellingen.
+function updateLockSettingsUI() {
+  const has = hasPassword();
+  $('lockStatusNote').textContent = has
+    ? 'Er is een wachtwoord ingesteld. Gebruik het slot in de balk om te (ont)grendelen.'
+    : 'Stel een wachtwoord in om bewerkingen te kunnen vergrendelen.';
+  $('passwordBtn').textContent = has ? 'Wachtwoord verwijderen…' : 'Wachtwoord instellen…';
 }
 
 function applySingleCueBadge() { modeBadge.hidden = !settings.singleCueMode; }
@@ -860,13 +1059,14 @@ function renderKeybinds() {
     const capturing = capturingAction === a.id;
     btn.className = 'kb-key' + (capturing ? ' capturing' : '');
     btn.textContent = capturing ? 'Druk op een toets…' : keyDisplay(keybinds[a.id]);
-    btn.addEventListener('click', () => { capturingAction = capturing ? null : a.id; renderKeybinds(); });
+    btn.addEventListener('click', () => { if (locked) return; capturingAction = capturing ? null : a.id; renderKeybinds(); });
     row.append(label, btn);
     list.appendChild(row);
   }
 }
 
 function applyPreset(name) {
+  if (locked) return;
   const preset = KEY_PRESETS[name];
   if (!preset) return;
   Object.assign(keybinds, preset);
@@ -894,6 +1094,30 @@ function bindSettings() {
   $('setBlockKeys').addEventListener('change', (e) => { settings.blockBrowserKeys = e.target.checked; saveSettings(); });
   $('setSaveKeybinds').addEventListener('change', (e) => { settings.saveKeybindsWithProject = e.target.checked; saveSettings(); });
 
+  $('passwordBtn').addEventListener('click', async () => {
+    if (hasPassword()) {
+      // Verwijderen: huidige wachtwoord vereist.
+      const pw = await customPrompt({
+        title: 'Wachtwoord verwijderen', message: 'Voer je huidige wachtwoord in om het te verwijderen.', okLabel: 'Verwijderen',
+        validate: async (v) => ((await checkPassword(v)) ? true : 'Onjuist wachtwoord.'),
+      });
+      if (pw == null) return;
+      localStorage.removeItem(LOCK_KEY);
+      localStorage.removeItem(LOCKED_KEY);
+      setLocked(false); // ontgrendelen + slot-icoon verbergen
+    } else {
+      // Instellen.
+      const pw = await customPrompt({
+        title: 'Wachtwoord instellen', message: 'Kies een wachtwoord om bewerkingen te kunnen vergrendelen.', okLabel: 'Instellen',
+        validate: (v) => (v && v.length >= 1 ? true : 'Voer een wachtwoord in.'),
+      });
+      if (pw == null) return;
+      await setPassword(pw);
+      applyLockState(); // slot-icoon verschijnt nu
+    }
+    updateLockSettingsUI();
+  });
+
   settingsModal.querySelectorAll('[data-preset]').forEach((b) => b.addEventListener('click', () => applyPreset(b.dataset.preset)));
 
   $('saveKeysBtn').addEventListener('click', () => {
@@ -916,6 +1140,7 @@ function bindSettings() {
     }
   });
 
+  $('newProjectBtn').addEventListener('click', newProject);
   $('saveProjectBtn').addEventListener('click', saveProject);
   $('openProjectBtn').addEventListener('click', () => $('projectInput').click());
   $('projectInput').addEventListener('change', async (e) => {
@@ -925,22 +1150,92 @@ function bindSettings() {
   });
 }
 
+// Vraag met 3 keuzes: Opslaan / Niet opslaan / Annuleren. Geeft 'save'|'discard'|'cancel'.
+function askSaveChoice() {
+  const modal = $('confirmModal');
+  $('confirmTitle').textContent = 'Niet-opgeslagen wijzigingen';
+  $('confirmMessage').textContent = 'Je hebt wijzigingen die nog niet als projectbestand zijn opgeslagen. Wil je ze opslaan?';
+  $('confirmOk').textContent = 'Opslaan';
+  const alt = $('confirmAlt'); alt.textContent = 'Niet opslaan'; alt.hidden = false;
+  $('confirmCancel').textContent = 'Annuleren';
+  modal.hidden = false; void modal.offsetWidth; modal.classList.add('open');
+  return new Promise((resolve) => {
+    const finish = (val) => {
+      window.removeEventListener('keydown', onKey, true);
+      $('confirmOk').removeEventListener('click', onOk);
+      alt.removeEventListener('click', onAlt);
+      modal.querySelectorAll('[data-confirm-cancel]').forEach((el) => el.removeEventListener('click', onCancel));
+      modal.classList.remove('open');
+      setTimeout(() => { modal.hidden = true; alt.hidden = true; }, 180);
+      resolve(val);
+    };
+    const onOk = () => finish('save');
+    const onAlt = () => finish('discard');
+    const onCancel = () => finish('cancel');
+    const onKey = (e) => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); finish('cancel'); } };
+    $('confirmOk').addEventListener('click', onOk);
+    alt.addEventListener('click', onAlt);
+    modal.querySelectorAll('[data-confirm-cancel]').forEach((el) => el.addEventListener('click', onCancel));
+    window.addEventListener('keydown', onKey, true);
+  });
+}
+
+// Bij niet-opgeslagen wijzigingen eerst vragen. Geeft false als de gebruiker annuleert.
+async function confirmDiscardChanges() {
+  if (!dirty || cues.cues.length === 0) return true;
+  const choice = await askSaveChoice();
+  if (choice === 'cancel') return false;
+  if (choice === 'save') return await saveProject();
+  return true; // niet opslaan → doorgaan
+}
+
+async function newProject() {
+  if (locked) return;
+  if (!(await confirmDiscardChanges())) return;
+  engine.stopAll();
+  for (const c of cues.cues) deleteAudio(c.id).catch(() => {});
+  cues.cues = [];
+  cues.selectedIndex = -1;
+  selection.clear();
+  render();
+  syncInspector();
+  persist();
+  dirty = false; // lege, verse show
+  setProjectName('Naamloos');
+  closeSettings();
+}
+
+// Slaat op onder een door de gebruiker gekozen naam. Geeft true bij succes.
 async function saveProject() {
-  if (cues.cues.length === 0) { alert('Er zijn nog geen cues om op te slaan.'); return; }
+  if (cues.cues.length === 0) { await customConfirm('Er zijn nog geen cues om op te slaan.', { title: 'Opslaan', okLabel: 'OK' }); return false; }
+  const name = await customPrompt({
+    title: 'Show opslaan', message: 'Geef de show een naam.', okLabel: 'Opslaan',
+    inputType: 'text', defaultValue: projectName,
+    validate: (v) => (v && v.trim() ? true : 'Voer een naam in.'),
+  });
+  if (name == null) return false;
+  setProjectName(name);
+  const filename = projectName.replace(/[^\w\-. ]+/g, '_') + '.webqlab';
   try {
     const kb = settings.saveKeybindsWithProject ? keybinds : null; // optioneel sneltoetsen meenemen
     const blob = await exportProject(cues.cues, settings, kb);
-    downloadBlob(blob, 'show.webqlab');
+    downloadBlob(blob, filename);
+    dirty = false;
+    return true;
   } catch (err) {
     console.error(err);
-    alert('Opslaan mislukt: ' + err.message);
+    await customConfirm('Opslaan mislukt: ' + err.message, { title: 'Fout', okLabel: 'OK' });
+    return false;
   }
 }
 
 async function openProjectFile(file) {
+  if (locked) return;
+  if (!(await confirmDiscardChanges())) return;
   try {
     const proj = await importProject(await file.arrayBuffer());
     await loadProject(proj);
+    setProjectName((file.name || 'show').replace(/\.webqlab$/i, '').replace(/\.[^.]+$/, ''));
     closeSettings();
   } catch (err) {
     console.error(err);
@@ -976,6 +1271,7 @@ async function loadProject(proj) {
   render();
   syncInspector();
   persist();
+  dirty = false; // net geladen show is "opgeslagen"
 }
 
 function downloadBlob(blob, filename) {
@@ -1013,10 +1309,22 @@ function runAction(id, e) {
     case 'selectUp': moveSel(-1, e.shiftKey); break;
     case 'selectDown': moveSel(1, e.shiftKey); break;
     case 'selectNext': moveSel(1, false); break;
+    case 'fadeInGo': openFadeInPrompt(); break;
     case 'delete': deleteSelected(); break;
     case 'fullscreen': toggleFullscreen(); break;
     default: break;
   }
+}
+
+// Na het schakelen van een switch/checkbox (waar dan ook) de focus loslaten, zodat
+// een volgende spatie GO doet i.p.v. de switch opnieuw om te schakelen.
+function bindSwitchBlur() {
+  document.addEventListener('change', (e) => {
+    const el = e.target;
+    if (el && el.tagName === 'INPUT' && (el.type === 'checkbox' || el.type === 'radio')) {
+      el.blur();
+    }
+  });
 }
 
 function bindKeyboard() {
@@ -1100,6 +1408,7 @@ function applyInspectorVisibility() {
 
 function bindTopbar() {
   $('fsBtn').addEventListener('click', toggleFullscreen);
+  $('lockBtn').addEventListener('click', toggleLock);
   $('inspectorToggle').addEventListener('click', () => {
     settings.inspectorHidden = !settings.inspectorHidden;
     saveSettings();
@@ -1127,6 +1436,8 @@ async function restoreFromStorage() {
       loopCrossfade: m.loopCrossfade || 0,
       inPoint: m.inPoint || 0,
       outPoint: m.outPoint || '',
+      autoContinue: !!m.autoContinue,
+      autoContinueDelay: m.autoContinueDelay ?? 1,
     });
   }
   if (cues.cues.length) selectOnly(cues.cues[0].id, 0);
@@ -1141,9 +1452,14 @@ bindLoaders();
 bindMenus();
 bindInspector();
 bindSettings();
+bindSwitchBlur();
+bindProjectTitle();
 bindKeyboard();
 applySingleCueBadge();
 applyInspectorVisibility();
+locked = hasPassword() && localStorage.getItem(LOCKED_KEY) === '1';
+applyLockState();
+updateProjectTitle();
 render();
 syncInspector();
 restoreFromStorage();

@@ -11,6 +11,7 @@
       <div class="logo">
         <img src="assets/logo.png" alt="CueGo" />
       </div>
+      <div id="projectTitle" class="project-title" title="Klik om de projectnaam te wijzigen">Naamloos</div>
 
       <div class="spacer"></div>
 
@@ -27,6 +28,11 @@
 
       <button id="inspectorToggle" class="btn icon-btn" title="Inspector tonen/verbergen" aria-label="Inspector tonen of verbergen">
         <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><line x1="15" y1="4" x2="15" y2="20"/></svg>
+      </button>
+
+      <button id="lockBtn" class="btn icon-btn" title="Vergrendelen" aria-label="Vergrendelen">
+        <svg class="ic-unlocked" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 9.9-1"/></svg>
+        <svg class="ic-locked" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" hidden><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
       </button>
 
       <button id="settingsBtn" class="btn icon-btn" title="Instellingen" aria-label="Instellingen">
@@ -111,6 +117,15 @@
             <span>Crossfade (s) <em>(0 = uit)</em></span>
             <input id="insLoopCrossfade" type="number" min="0" step="0.1" placeholder="0" />
           </label>
+          <label class="switch inspector-switch">
+            <input id="insAutoContinue" type="checkbox" />
+            <span class="switch-track"></span>
+            <span class="switch-label">Auto-doorgaan<em>Start de volgende cue na afloop</em></span>
+          </label>
+          <label class="field" id="autoContinueField" hidden>
+            <span>Na (s)</span>
+            <input id="insAutoDelay" type="number" min="0" step="0.5" placeholder="1" />
+          </label>
           <div class="inspector-actions">
             <button id="moveUpBtn" class="btn" title="Omhoog">↑</button>
             <button id="moveDownBtn" class="btn" title="Omlaag">↓</button>
@@ -165,6 +180,11 @@
               <span class="switch-track"></span>
               <span class="switch-label">Browser-sneltoetsen blokkeren<em>Voorkomt o.a. Ctrl/Cmd+R, +S, +F. Enkele (Cmd+W/Q/T) kan de browser niet blokkeren.</em></span>
             </label>
+
+            <div class="settings-lock">
+              <p id="lockStatusNote" class="settings-note"></p>
+              <button id="passwordBtn" class="btn">Wachtwoord instellen…</button>
+            </div>
           </div>
 
           <div class="tab-panel" data-panel="keys" hidden>
@@ -190,6 +210,7 @@
               <span class="switch-label">Sneltoetsen meenemen<em>Slaat je huidige sneltoetsen mee op in het projectbestand.</em></span>
             </label>
             <div class="settings-actions">
+              <button id="newProjectBtn" class="btn">Nieuw…</button>
               <button id="saveProjectBtn" class="btn primary">Opslaan…</button>
               <button id="openProjectBtn" class="btn">Openen…</button>
               <input id="projectInput" type="file" accept=".webqlab,application/octet-stream" hidden />
@@ -210,7 +231,25 @@
           <p id="confirmMessage" class="confirm-message"></p>
           <div class="confirm-actions">
             <button id="confirmCancel" class="btn" data-confirm-cancel>Annuleren</button>
+            <button id="confirmAlt" class="btn" hidden>Niet opslaan</button>
             <button id="confirmOk" class="btn primary">Bevestigen</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Wachtwoord-dialog (vergrendelen/ontgrendelen) -->
+    <div id="promptModal" class="modal" hidden>
+      <div class="modal-backdrop" data-prompt-cancel></div>
+      <div class="modal-card confirm-card" role="dialog" aria-modal="true" aria-labelledby="promptTitle">
+        <div class="modal-head"><h2 id="promptTitle">Wachtwoord</h2></div>
+        <div class="modal-body">
+          <p id="promptMessage" class="confirm-message"></p>
+          <input id="promptInput" type="password" class="prompt-input" autocomplete="off" />
+          <p id="promptError" class="prompt-error" hidden></p>
+          <div class="confirm-actions">
+            <button class="btn" data-prompt-cancel>Annuleren</button>
+            <button id="promptOk" class="btn primary">OK</button>
           </div>
         </div>
       </div>
