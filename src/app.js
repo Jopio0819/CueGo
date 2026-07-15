@@ -492,15 +492,34 @@ function go() {
   syncInspector();
 }
 
-// Transition: druk op 'i' → vraag een fade-in tijd, dan de geselecteerde cue met die
-// fade-in starten (en de selectie doorschuiven, zoals GO).
+const numValidate = (x) => (x !== '' && !Number.isNaN(parseFloat(x)) && parseFloat(x) >= 0 ? true : 'Voer een geldig getal in.');
+
+// Transition-toets ('i'):
+// - 2 cues geselecteerd → crossfade: speel de eerste, en vlak voor het einde daarvan
+//   vloeit hij over in de tweede (eerste faadt uit, tweede faadt in).
+// - 1 cue geselecteerd → start die cue met een gekozen fade-in (en schuif door, zoals GO).
 async function openFadeInPrompt() {
+  const selCues = [...selection]
+    .map((id) => cues.getById(id))
+    .filter(Boolean)
+    .sort((a, b) => cues.cues.indexOf(a) - cues.cues.indexOf(b));
+
+  if (selCues.length >= 2) {
+    const [a, b] = selCues;
+    const v = await customPrompt({
+      title: 'Crossfade', message: `Crossfade van "${a.name}" naar "${b.name}" (s):`, okLabel: 'Start',
+      inputType: 'number', defaultValue: '3', validate: numValidate,
+    });
+    if (v == null) return;
+    transitionBetween(a, b, Math.max(0, parseFloat(v) || 0)); // 0 = harde cut (geen fade)
+    return;
+  }
+
   const cue = cues.selected;
   if (!cue) return;
   const v = await customPrompt({
     title: 'Fade-in', message: `Hoe lang moet de fade-in van "${cue.name}" duren (s)?`, okLabel: 'Start',
-    inputType: 'number', defaultValue: String(cue.fadeIn || 2),
-    validate: (x) => (x !== '' && !Number.isNaN(parseFloat(x)) && parseFloat(x) >= 0 ? true : 'Voer een geldig getal in.'),
+    inputType: 'number', defaultValue: String(cue.fadeIn || 2), validate: numValidate,
   });
   if (v == null) return;
   await playCue(cue, { fadeIn: Math.max(0, parseFloat(v) || 0) });
@@ -508,6 +527,27 @@ async function openFadeInPrompt() {
   if (cues.selected) selectOnly(cues.selected.id, cues.selectedIndex);
   render();
   syncInspector();
+}
+
+// Speel cue A en cross-fade vlak voor A's einde naar cue B over `fade` seconden.
+async function transitionBetween(a, b, fade) {
+  await engine.prepare(a).catch(() => {});
+  await engine.prepare(b).catch(() => {});
+  await engine.play(a, { onEnded: onCueEnded });
+  render();
+  animateProgress();
+  const lenA = engine.playLength(a) || 0;
+  // Kleine voorsprong zodat de transitie nog vóór A's natuurlijke einde valt (ook bij fade 0).
+  const startMs = Math.max(0, lenA - Math.max(fade, 0.06)) * 1000;
+  setTimeout(async () => {
+    if (!engine.isPlaying(a.id)) return; // gebruiker greep in → transitie afblazen
+    engine.fadeOutCue(a.id, fade); // A uitfaden
+    await engine.play(b, { fadeIn: fade, onEnded: onCueEnded }); // B infaden
+    const bi = cues.cues.indexOf(b);
+    if (bi !== -1) { selectOnly(b.id, bi); syncInspector(); }
+    render();
+    animateProgress();
+  }, startMs);
 }
 
 function panic() {
