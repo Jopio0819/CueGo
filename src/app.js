@@ -250,6 +250,13 @@ function updateProjectTitle() {
 
 function bindProjectTitle() {
   const el = $('projectTitle');
+  const commit = (save) => {
+    if (el.getAttribute('contenteditable') !== 'true') return;
+    el.setAttribute('contenteditable', 'false');
+    if (save) setProjectName(el.textContent);
+    else el.textContent = projectName;
+    el.blur();
+  };
   el.addEventListener('click', () => {
     if (locked || el.getAttribute('contenteditable') === 'true') return;
     el.setAttribute('contenteditable', 'true');
@@ -262,13 +269,10 @@ function bindProjectTitle() {
   });
   el.addEventListener('keydown', (e) => {
     e.stopPropagation(); // globale sneltoetsen niet triggeren tijdens typen
-    if (e.key === 'Enter') { e.preventDefault(); el.blur(); }
-    else if (e.key === 'Escape') { e.preventDefault(); el.textContent = projectName; el.blur(); }
+    if (e.key === 'Enter') { e.preventDefault(); commit(true); }
+    else if (e.key === 'Escape') { e.preventDefault(); commit(false); }
   });
-  el.addEventListener('blur', () => {
-    el.setAttribute('contenteditable', 'false');
-    setProjectName(el.textContent);
-  });
+  el.addEventListener('blur', () => commit(true));
 }
 
 // Pas fn toe op elke geselecteerde cue (of op de primaire als er niets in de set staat).

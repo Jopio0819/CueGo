@@ -17,6 +17,7 @@
 }
 
 * { box-sizing: border-box; }
+[hidden] { display: none !important; } /* hidden-attribuut wint altijd van display-regels */
 
 html, body {
   margin: 0;
