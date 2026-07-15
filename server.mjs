@@ -36,7 +36,8 @@ const server = createServer(async (req, res) => {
     }
     const body = await readFile(filePath);
     const type = MIME[extname(filePath).toLowerCase()] || 'application/octet-stream';
-    res.writeHead(200, { 'Content-Type': type }).end(body);
+    // Geen caching: tijdens ontwikkelen altijd de nieuwste bestanden serveren.
+    res.writeHead(200, { 'Content-Type': type, 'Cache-Control': 'no-store' }).end(body);
   } catch (err) {
     if (err.code === 'ENOENT') res.writeHead(404).end('Not found');
     else {

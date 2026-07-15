@@ -73,6 +73,10 @@ const tpDuration = $('tpDuration');
 const tpName = $('tpName');
 const modeBadge = $('modeBadge');
 const settingsModal = $('settingsModal');
+const previewBtn = $('previewBtn');
+const previewSeek = $('previewSeek');
+const previewCur = $('previewCur');
+const previewDur = $('previewDur');
 
 // --- Rendering -------------------------------------------------------------
 
@@ -197,11 +201,32 @@ function syncInspector() {
   $('insName').value = cue.name;
   $('insFadeIn').value = cue.fadeIn;
   $('insFadeOut').value = cue.fadeOut;
+  $('insFadeOutEnd').checked = !!cue.fadeOutAtEnd;
   $('insVolume').value = cue.volume;
   $('insVolumeVal').textContent = `${Math.round(cue.volume * 100)}%`;
   $('insLoop').checked = !!cue.loop;
   $('insLoopCount').value = cue.loopCount || '';
+  $('insLoopCrossfade').value = cue.loopCrossfade || '';
   $('loopCountField').hidden = !cue.loop;
+  $('loopCrossfadeField').hidden = !cue.loop;
+  $('insInPoint').value = cue.inPoint || '';
+  $('insOutPoint').value = cue.outPoint || '';
+  showInspectorDuration(cue);
+  syncPreviewBar();
+}
+
+// Toon de audioduur in seconden (decodeert op de achtergrond als 'ie nog onbekend is).
+function showInspectorDuration(cue) {
+  const el = $('insDuration');
+  const dur = engine.duration(cue.id);
+  if (dur) {
+    el.textContent = `${dur.toFixed(1)} s`;
+    return;
+  }
+  el.textContent = '…';
+  engine.prepare(cue)
+    .then(() => { if (cues.selected === cue) el.textContent = `${engine.duration(cue.id).toFixed(1)} s`; })
+    .catch(() => { if (cues.selected === cue) el.textContent = '—'; });
 }
 
 function persist() { saveMeta(cues.cues); }
@@ -270,6 +295,7 @@ function bindInspector() {
   // Fades & volume: meteen op álle geselecteerde cues (zonder prompt).
   $('insFadeIn').addEventListener('input', (e) => { const v = num(e.target.value, 0); applyToSelected((c) => { c.fadeIn = v; }); render(); persist(); });
   $('insFadeOut').addEventListener('input', (e) => { const v = num(e.target.value, 0); applyToSelected((c) => { c.fadeOut = v; }); render(); persist(); });
+  $('insFadeOutEnd').addEventListener('change', (e) => { const on = e.target.checked; applyToSelected((c) => { c.fadeOutAtEnd = on; }); persist(); });
   $('insVolume').addEventListener('input', (e) => {
     const v = num(e.target.value, 1);
     applyToSelected((c) => { c.volume = v; });
@@ -283,6 +309,7 @@ function bindInspector() {
     const on = e.target.checked;
     applyToSelected((c) => { c.loop = on; });
     $('loopCountField').hidden = !on;
+    $('loopCrossfadeField').hidden = !on;
     render();
     persist();
   });
@@ -291,6 +318,28 @@ function bindInspector() {
     applyToSelected((c) => { c.loopCount = val; });
     render();
     persist();
+  });
+  $('insLoopCrossfade').addEventListener('input', (e) => {
+    const v = Math.max(0, num(e.target.value, 0));
+    applyToSelected((c) => { c.loopCrossfade = v; });
+    persist();
+  });
+
+  // In-/uitpunt (op alle geselecteerde cues).
+  $('insInPoint').addEventListener('input', (e) => {
+    const v = Math.max(0, num(e.target.value, 0));
+    applyToSelected((c) => { c.inPoint = v; });
+    render(); // ook de onderste afspeelbalk (region-duur) bijwerken
+    persist();
+    syncPreviewBar();
+  });
+  $('insOutPoint').addEventListener('input', (e) => {
+    const raw = e.target.value.trim();
+    const v = raw === '' ? '' : Math.max(0, num(raw, 0));
+    applyToSelected((c) => { c.outPoint = v; });
+    render();
+    persist();
+    syncPreviewBar();
   });
 
   $('moveUpBtn').addEventListener('click', () => withSelected((c) => { cues.move(c.id, -1); render(); persist(); }));
@@ -352,6 +401,17 @@ async function playCue(cue, opts = {}) {
 
 async function playSelected() { const cue = cues.selected; if (cue) await playCue(cue); }
 
+// Speel ÁLLE cues tegelijk (ook in single cue-modus). Eerst decoderen zodat ze
+// zo gelijk mogelijk starten.
+async function playAll() {
+  const list = cues.cues.slice();
+  if (!list.length) return;
+  await Promise.all(list.map((c) => engine.prepare(c).catch(() => {})));
+  for (const cue of list) engine.play(cue, { onEnded: onCueEnded }); // engine.play omzeilt single cue
+  render();
+  animateProgress();
+}
+
 function go() {
   const cue = cues.selected;
   if (!cue) return;
@@ -390,15 +450,18 @@ function animateProgress() {
     for (const cueId of engine.voices.keys()) {
       if (!engine.isPlaying(cueId)) continue;
       anyActive = true;
-      const dur = engine.duration(cueId) || 1;
+      const c = cues.getById(cueId);
+      const dur = (c && engine.playLength(c)) || 1;
       const pct = Math.min(1, engine.position(cueId) / dur);
       const fill = document.querySelector(`[data-fill="${cueId}"]`);
       if (fill) fill.style.width = `${pct * 100}%`;
     }
     syncTransportProgress();
+    syncPreviewBar();
     rafId = anyActive ? requestAnimationFrame(tick) : null;
   };
   rafId = requestAnimationFrame(tick);
+  startPreviewTicker(); // robuuste back-up voor de preview-tijd
 }
 
 // Welke cue bestuurt de afspeelbalk?
@@ -442,16 +505,16 @@ function syncTransport() {
     return;
   }
   tpName.textContent = cue.name;
-  const known = engine.duration(cue.id);
+  const known = engine.playLength(cue);
   if (known) tpDuration.textContent = fmtTime(known);
-  else engine.prepare(cue).then(() => { if (transportCue() === cue) tpDuration.textContent = fmtTime(engine.duration(cue.id)); }).catch(() => {});
+  else engine.prepare(cue).then(() => { if (transportCue() === cue) tpDuration.textContent = fmtTime(engine.playLength(cue)); }).catch(() => {});
   syncTransportProgress();
 }
 
 function syncTransportProgress() {
   const cue = transportCue();
   if (!cue) { setPlayIcon(false); return; }
-  const dur = engine.duration(cue.id) || 0;
+  const dur = engine.playLength(cue) || 0;
   const pos = engine.position(cue.id);
   tpCurrent.textContent = fmtTime(pos);
   if (!seeking) { seekEl.value = dur ? Math.round((pos / dur) * 1000) : 0; updateSeekFill(); }
@@ -482,7 +545,7 @@ function bindTransportBar() {
     updateSeekFill();
     const cue = transportCue();
     if (!cue) return;
-    const dur = engine.duration(cue.id) || 0;
+    const dur = engine.playLength(cue) || 0;
     tpCurrent.textContent = fmtTime((seekEl.value / 1000) * dur);
   });
 
@@ -490,11 +553,85 @@ function bindTransportBar() {
     seeking = false;
     const cue = transportCue();
     if (!cue) return;
-    const dur = engine.duration(cue.id) || (await engine.prepare(cue));
+    await engine.prepare(cue);
+    const dur = engine.playLength(cue) || 0;
     await engine.seek(cue, (seekEl.value / 1000) * dur, { onEnded: onCueEnded });
     render();
     if (engine.isPlaying(cue.id)) animateProgress();
     syncTransportProgress();
+  });
+}
+
+// --- Preview-/monitor-balk in de inspector (voor de geselecteerde cue) ------
+
+let previewSeeking = false;
+function syncPreviewBar() {
+  const cue = cues.selected;
+  if (!cue) {
+    previewCur.textContent = '0:00';
+    previewDur.textContent = '0:00';
+    previewSeek.value = 0;
+    previewSeek.style.setProperty('--seek-pct', '0%');
+    previewBtn.textContent = '▶';
+    return;
+  }
+  const len = engine.playLength(cue);
+  if (len) previewDur.textContent = fmtTime(len);
+  else engine.prepare(cue).then(() => { if (cues.selected === cue) previewDur.textContent = fmtTime(engine.playLength(cue)); }).catch(() => {});
+  const pos = engine.position(cue.id);
+  previewCur.textContent = fmtTime(pos);
+  if (!previewSeeking) {
+    const pct = len ? (pos / len) * 100 : 0;
+    previewSeek.value = Math.round(pct * 10);
+    previewSeek.style.setProperty('--seek-pct', `${pct}%`);
+  }
+  previewBtn.textContent = engine.isPlaying(cue.id) ? '⏸' : '▶';
+}
+
+// Robuuste updater voor de preview-tijd (los van de rAF-lus, die soms gepauzeerd wordt).
+let previewTimer = null;
+function startPreviewTicker() {
+  if (previewTimer) return;
+  previewTimer = setInterval(() => {
+    const cue = cues.selected;
+    syncPreviewBar();
+    if (!cue || (!engine.isPlaying(cue.id) && !engine.isPaused(cue.id))) {
+      clearInterval(previewTimer);
+      previewTimer = null;
+    }
+  }, 120);
+}
+
+function bindPreviewBar() {
+  previewBtn.addEventListener('click', async () => {
+    const cue = cues.selected;
+    if (!cue) return;
+    if (engine.isPlaying(cue.id)) engine.pause(cue.id);
+    else if (engine.isPaused(cue.id)) await engine.resume(cue.id);
+    else await playCue(cue);
+    render();
+    animateProgress();
+    syncPreviewBar();
+    startPreviewTicker();
+  });
+  previewSeek.addEventListener('input', () => {
+    previewSeeking = true;
+    previewSeek.style.setProperty('--seek-pct', `${previewSeek.value / 10}%`);
+    const cue = cues.selected;
+    if (!cue) return;
+    const len = engine.playLength(cue) || 0;
+    previewCur.textContent = fmtTime((previewSeek.value / 1000) * len);
+  });
+  previewSeek.addEventListener('change', async () => {
+    previewSeeking = false;
+    const cue = cues.selected;
+    if (!cue) return;
+    await engine.prepare(cue);
+    const len = engine.playLength(cue) || 0;
+    await engine.seek(cue, (previewSeek.value / 1000) * len, { onEnded: onCueEnded });
+    render();
+    if (engine.isPlaying(cue.id)) animateProgress();
+    syncPreviewBar();
   });
 }
 
@@ -856,11 +993,22 @@ function downloadBlob(blob, filename) {
 
 let capturingAction = null;
 
-function isTyping() { return ['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement?.tagName); }
+// Alleen echte tekstinvoer telt als 'typen'. Een gefocuste checkbox/switch/slider/knop
+// niet — zodat spatie ook dan GO doet i.p.v. de switch opnieuw om te schakelen.
+function isTyping() {
+  const el = document.activeElement;
+  if (!el) return false;
+  if (el.tagName === 'TEXTAREA' || el.tagName === 'SELECT') return true;
+  if (el.tagName === 'INPUT') {
+    const t = (el.type || 'text').toLowerCase();
+    return !['checkbox', 'radio', 'range', 'button', 'submit', 'reset', 'file', 'color'].includes(t);
+  }
+  return false;
+}
 
 function runAction(id, e) {
   switch (id) {
-    case 'go': go(); break;
+    case 'go': (e && e.shiftKey) ? playAll() : go(); break;
     case 'playPause': transportToggle(); break;
     case 'selectUp': moveSel(-1, e.shiftKey); break;
     case 'selectDown': moveSel(1, e.shiftKey); break;
@@ -972,9 +1120,13 @@ async function restoreFromStorage() {
       file,
       fadeIn: m.fadeIn ?? 0,
       fadeOut: m.fadeOut ?? 3,
+      fadeOutAtEnd: !!m.fadeOutAtEnd,
       volume: m.volume ?? 1,
       loop: !!m.loop,
       loopCount: m.loopCount || '',
+      loopCrossfade: m.loopCrossfade || 0,
+      inPoint: m.inPoint || 0,
+      outPoint: m.outPoint || '',
     });
   }
   if (cues.cues.length) selectOnly(cues.cues[0].id, 0);
@@ -984,6 +1136,7 @@ async function restoreFromStorage() {
 
 bindTopbar();
 bindTransportBar();
+bindPreviewBar();
 bindLoaders();
 bindMenus();
 bindInspector();

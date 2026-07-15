@@ -227,6 +227,7 @@ body.inspector-collapsed .inspector {
 .field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 14px; }
 .field > span { color: var(--muted); font-size: 12px; display: flex; justify-content: space-between; }
 .field > span em { color: var(--text); font-style: normal; font-variant-numeric: tabular-nums; }
+.field[hidden] { display: none; } /* hidden-attribuut moet winnen van display:flex */
 .field-row { display: flex; gap: 10px; }
 .field-row .field { flex: 1; }
 .field-row .field.narrow { flex: 0 0 76px; }
@@ -245,6 +246,40 @@ input[type="range"] { width: 100%; accent-color: var(--accent); cursor: pointer;
 
 .inspector-actions { display: flex; gap: 8px; margin-top: 8px; }
 .inspector-actions .btn { flex: 1; }
+.readonly-value {
+  padding: 8px 10px;
+  font-size: 13px;
+  color: var(--muted);
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Preview-/monitor-balk in de inspector */
+.preview-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 2px 0 16px;
+}
+.preview-btn {
+  flex: 0 0 auto;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  border: none;
+  background: var(--accent);
+  color: #06152e;
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.preview-btn:hover { filter: brightness(1.08); }
+.preview-bar .tp-time { min-width: 32px; }
 .inspector-switch { margin: 2px 0 14px; }
 .inspector-switch .switch-label { font-size: 13px; }
 #loopCountField .field > span, #loopCountField span { display: block; }

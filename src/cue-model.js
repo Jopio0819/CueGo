@@ -35,9 +35,13 @@ export function createCue(file) {
     file,
     fadeIn: 0, // seconden
     fadeOut: 3, // seconden (per-cue default)
+    fadeOutAtEnd: false, // fade-uit ook aan het natuurlijke einde (niet alleen bij Esc)
     volume: 1, // 0..1
     loop: false, // herhalen?
     loopCount: '', // aantal keer afspelen; leeg = oneindig
+    loopCrossfade: 0, // crossfade tussen loop-iteraties in seconden (0 = uit)
+    inPoint: 0, // startpunt in seconden
+    outPoint: '', // eindpunt in seconden; leeg = einde van de audio
   };
 }
 

@@ -71,10 +71,29 @@
             <label class="field narrow"><span>Nr.</span><input id="insNumber" type="text" placeholder="—" /></label>
             <label class="field"><span>Naam</span><input id="insName" type="text" /></label>
           </div>
+          <div class="field">
+            <span>Duur</span>
+            <div id="insDuration" class="readonly-value">—</div>
+          </div>
+          <div class="field-row">
+            <label class="field"><span>Begin (s)</span><input id="insInPoint" type="number" min="0" step="0.5" placeholder="0" /></label>
+            <label class="field"><span>Einde (s)</span><input id="insOutPoint" type="number" min="0" step="0.5" placeholder="einde" /></label>
+          </div>
+          <div class="preview-bar">
+            <button id="previewBtn" class="preview-btn" title="Preview (monitor)" aria-label="Preview afspelen/pauze">▶</button>
+            <span id="previewCur" class="tp-time">0:00</span>
+            <input id="previewSeek" class="seek" type="range" min="0" max="1000" step="1" value="0" aria-label="Preview-positie" />
+            <span id="previewDur" class="tp-time">0:00</span>
+          </div>
           <div class="field-row">
             <label class="field"><span>Fade in (s)</span><input id="insFadeIn" type="number" min="0" step="0.5" /></label>
             <label class="field"><span>Fade uit (s)</span><input id="insFadeOut" type="number" min="0" step="0.5" /></label>
           </div>
+          <label class="switch inspector-switch">
+            <input id="insFadeOutEnd" type="checkbox" />
+            <span class="switch-track"></span>
+            <span class="switch-label">Fade uit aan het einde<em>Anders alleen bij Esc</em></span>
+          </label>
           <label class="field">
             <span>Volume <em id="insVolumeVal"></em></span>
             <input id="insVolume" type="range" min="0" max="1" step="0.01" />
@@ -87,6 +106,10 @@
           <label class="field" id="loopCountField" hidden>
             <span>Aantal keer <em>(leeg = oneindig)</em></span>
             <input id="insLoopCount" type="number" min="1" step="1" placeholder="∞" />
+          </label>
+          <label class="field" id="loopCrossfadeField" hidden>
+            <span>Crossfade (s) <em>(0 = uit)</em></span>
+            <input id="insLoopCrossfade" type="number" min="0" step="0.1" placeholder="0" />
           </label>
           <div class="inspector-actions">
             <button id="moveUpBtn" class="btn" title="Omhoog">↑</button>
