@@ -5,7 +5,7 @@
 
 const MAGIC = 'WQL1';
 
-export async function exportProject(cues, settings) {
+export async function exportProject(cues, settings, keybinds = null) {
   const audioBuffers = [];
   const cueMeta = [];
   for (const c of cues) {
@@ -23,7 +23,9 @@ export async function exportProject(cues, settings) {
       size: buf.byteLength,
     });
   }
-  const headerBytes = new TextEncoder().encode(JSON.stringify({ version: 1, settings, cues: cueMeta }));
+  const header = { version: 1, settings, cues: cueMeta };
+  if (keybinds) header.keybinds = keybinds; // optioneel: sneltoetsen meenemen
+  const headerBytes = new TextEncoder().encode(JSON.stringify(header));
   const lenBytes = new Uint8Array(4);
   new DataView(lenBytes.buffer).setUint32(0, headerBytes.length, true);
   return new Blob([MAGIC, lenBytes, headerBytes, ...audioBuffers], { type: 'application/octet-stream' });
@@ -45,5 +47,5 @@ export async function importProject(arrayBuffer) {
     const file = new File([slice], m.fileName || `${m.name}.audio`, { type: m.fileType || 'audio/*' });
     cues.push({ id: m.id, number: m.number || '', name: m.name, fadeIn: m.fadeIn, fadeOut: m.fadeOut, volume: m.volume, file });
   }
-  return { settings: header.settings || {}, cues };
+  return { settings: header.settings || {}, keybinds: header.keybinds || null, cues };
 }

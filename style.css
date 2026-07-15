@@ -362,6 +362,7 @@ body.dragging .drop-overlay { display: flex; }
 .tab-panel[hidden] { display: none; }
 .settings-note { margin: 4px 0 12px; color: var(--muted); font-size: 12px; line-height: 1.5; }
 .settings-actions { display: flex; gap: 10px; margin-top: 4px; }
+.tab-panel[data-panel="project"] .switch { margin: 8px 0 18px; }
 .switch + .switch { margin-top: 14px; }
 
 /* Keybind editor */

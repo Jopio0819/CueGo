@@ -13,7 +13,7 @@ let anchorIndex = -1;
 
 // Instellingen (persist in localStorage).
 const SETTINGS_KEY = 'webqlab.settings.v1';
-const defaultSettings = { defaultFadeIn: 0, escFade: 3, singleCueMode: false, blockBrowserKeys: true, inspectorHidden: false };
+const defaultSettings = { defaultFadeIn: 0, escFade: 3, singleCueMode: false, blockBrowserKeys: true, inspectorHidden: false, saveKeybindsWithProject: false };
 const settings = { ...defaultSettings, ...loadSettings() };
 
 function loadSettings() {
@@ -674,6 +674,7 @@ function syncSettingsForm() {
   $('setEscFade').value = settings.escFade;
   $('setSingleCue').checked = settings.singleCueMode;
   $('setBlockKeys').checked = settings.blockBrowserKeys;
+  $('setSaveKeybinds').checked = settings.saveKeybindsWithProject;
 }
 
 function applySingleCueBadge() { modeBadge.hidden = !settings.singleCueMode; }
@@ -731,6 +732,7 @@ function bindSettings() {
     render();
   });
   $('setBlockKeys').addEventListener('change', (e) => { settings.blockBrowserKeys = e.target.checked; saveSettings(); });
+  $('setSaveKeybinds').addEventListener('change', (e) => { settings.saveKeybindsWithProject = e.target.checked; saveSettings(); });
 
   settingsModal.querySelectorAll('[data-preset]').forEach((b) => b.addEventListener('click', () => applyPreset(b.dataset.preset)));
 
@@ -766,7 +768,8 @@ function bindSettings() {
 async function saveProject() {
   if (cues.cues.length === 0) { alert('Er zijn nog geen cues om op te slaan.'); return; }
   try {
-    const blob = await exportProject(cues.cues, settings);
+    const kb = settings.saveKeybindsWithProject ? keybinds : null; // optioneel sneltoetsen meenemen
+    const blob = await exportProject(cues.cues, settings, kb);
     downloadBlob(blob, 'show.webqlab');
   } catch (err) {
     console.error(err);
@@ -796,6 +799,14 @@ async function loadProject(proj) {
   saveSettings();
   syncSettingsForm();
   applySingleCueBadge();
+  applyInspectorVisibility();
+
+  // Sneltoetsen uit het project overnemen (indien meegenomen bij opslaan).
+  if (proj.keybinds) {
+    for (const a of KEY_ACTIONS) if (a.id in proj.keybinds) keybinds[a.id] = proj.keybinds[a.id];
+    saveKeybinds();
+    renderKeybinds();
+  }
 
   for (const c of proj.cues) {
     cues.addExisting(c);
