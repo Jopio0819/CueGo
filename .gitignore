@@ -1,0 +1,9 @@
+# OS
+.DS_Store
+
+# Lokale testbestanden (gegenereerde testtonen)
+testaudio/
+
+# Geëxporteerde shows / presets (horen niet in de repo)
+*.webqlab
+*.webqlabkeys
