@@ -39,8 +39,15 @@ const server = createServer(async (req, res) => {
     // Geen caching: tijdens ontwikkelen altijd de nieuwste bestanden serveren.
     res.writeHead(200, { 'Content-Type': type, 'Cache-Control': 'no-store' }).end(body);
   } catch (err) {
-    if (err.code === 'ENOENT') res.writeHead(404).end('Not found');
-    else {
+    if (err.code === 'ENOENT') {
+      // Serveer de nette 404-pagina (zoals GitHub Pages), val terug op tekst.
+      try {
+        const page = await readFile(join(ROOT, '404.html'));
+        res.writeHead(404, { 'Content-Type': MIME['.html'], 'Cache-Control': 'no-store' }).end(page);
+      } catch {
+        res.writeHead(404).end('Not found');
+      }
+    } else {
       console.error(err);
       res.writeHead(500).end('Server error');
     }

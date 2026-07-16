@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Page not found — CueGo</title>
+    <meta name="robots" content="noindex" />
+    <link rel="icon" href="assets/logo.png" />
+    <style>
+      :root {
+        --bg: #0b0c10;
+        --panel: #14161c;
+        --panel-2: #191c23;
+        --line: #262a33;
+        --line-strong: #333a47;
+        --text: #e8eaf0;
+        --muted: #8b92a3;
+        --faint: #5a6172;
+        --accent: #4c8dff;
+        --play: #35c88f;
+      }
+      * { box-sizing: border-box; }
+      html, body { margin: 0; padding: 0; }
+      body {
+        background: var(--bg);
+        color: var(--text);
+        font: 16px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+        -webkit-font-smoothing: antialiased;
+        min-height: 100vh;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        overflow-x: hidden;
+      }
+      a { color: inherit; }
+
+      .glow {
+        position: fixed;
+        inset: 0;
+        pointer-events: none;
+        z-index: 0;
+        background:
+          radial-gradient(600px 400px at 50% -5%, rgba(76, 141, 255, 0.18), transparent 70%),
+          radial-gradient(500px 360px at 85% 15%, rgba(53, 200, 143, 0.12), transparent 70%);
+      }
+
+      .box { position: relative; z-index: 1; text-align: center; padding: 40px 24px; max-width: 560px; }
+      .box img.mark {
+        width: 88px; height: 88px; border-radius: 22px;
+        box-shadow: 0 20px 60px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(255, 255, 255, 0.04);
+        margin-bottom: 24px;
+      }
+      .code {
+        font-size: clamp(72px, 16vw, 120px); line-height: 1; font-weight: 800; letter-spacing: -0.03em;
+        margin: 0 0 8px;
+        background: linear-gradient(90deg, var(--accent), var(--play));
+        -webkit-background-clip: text; background-clip: text; color: transparent;
+      }
+      h1 { font-size: clamp(22px, 4vw, 30px); margin: 0 0 12px; letter-spacing: -0.01em; }
+      p.sub { color: var(--muted); font-size: 16px; max-width: 420px; margin: 0 auto 30px; }
+
+      .cta { display: inline-flex; align-items: center; gap: 12px; flex-wrap: wrap; justify-content: center; }
+      .btn-primary {
+        display: inline-flex; align-items: center; gap: 10px; text-decoration: none;
+        background: var(--play); color: #04180f; font-weight: 700; font-size: 16px;
+        padding: 13px 26px; border-radius: 12px;
+        box-shadow: 0 8px 30px rgba(53, 200, 143, 0.35);
+        transition: transform .1s ease, filter .15s ease;
+      }
+      .btn-primary:hover { filter: brightness(1.06); }
+      .btn-primary:active { transform: translateY(1px); }
+      .btn-secondary {
+        display: inline-flex; align-items: center; gap: 8px; text-decoration: none;
+        color: var(--text); font-weight: 600; font-size: 15px;
+        padding: 13px 22px; border: 1px solid var(--line-strong); border-radius: 12px;
+        transition: border-color .15s, background .15s;
+      }
+      .btn-secondary:hover { border-color: var(--muted); background: var(--panel); }
+    </style>
+  </head>
+  <body>
+    <div class="glow"></div>
+    <div class="box">
+      <img class="mark" src="assets/logo.png" alt="CueGo logo" />
+      <p class="code">404</p>
+      <h1>This cue doesn't exist.</h1>
+      <p class="sub">The page you're looking for was moved, renamed, or never made it to the cue list.</p>
+      <div class="cta">
+        <a class="btn-primary" href="/">Back home</a>
+        <a class="btn-secondary" href="app.html">Open CueGo</a>
+      </div>
+    </div>
+  </body>
+</html>
