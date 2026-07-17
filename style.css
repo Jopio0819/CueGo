@@ -223,22 +223,90 @@ body.locked .project-title:hover { background: transparent; }
 
 /* ---------- Inspector ---------- */
 .inspector {
-  flex: 0 0 290px;
+  position: relative;
+  /* flex-basis wordt vanuit JS gezet (applyInspectorLayout), NIET via var().
+     Een var() op een property die tegelijk getransitioneerd wordt, blijft in
+     Chromium op de eerst-berekende waarde hangen — de breedte verspringt dan niet.
+     .inspector-inner mag wél var() gebruiken: daar zit geen transitie op. */
+  flex-grow: 0;
+  flex-shrink: 0;
+  flex-basis: 290px;
   background: var(--panel);
   border-left: 1px solid var(--line);
   overflow: hidden;
   transition: flex-basis 0.26s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.2s ease, border-left-width 0.26s ease;
 }
 .inspector-inner {
-  width: 290px;      /* vaste breedte: inhoud verspringt niet tijdens het animeren */
+  /* Vaste breedte (niet 100%): inhoud verspringt niet tijdens het in/uitklappen. */
+  width: var(--inspector-w, 290px);
   height: 100%;
   padding: 16px;
   box-sizing: border-box;
   overflow-y: auto;
 }
-/* Ingeklapte staat — soepel in/uit schuiven. */
+
+/* Sleepgreep om de inspector breder/smaller te maken */
+.inspector-resize {
+  position: absolute;
+  top: 0; left: 0; bottom: 0;
+  width: 6px;
+  cursor: col-resize;
+  z-index: 5;
+  background: transparent;
+  transition: background 0.12s;
+}
+.inspector-resize:hover, body.resizing-inspector .inspector-resize { background: var(--accent); }
+/* Tijdens het slepen: geen animatie (die zou achterlopen) en geen tekstselectie. */
+body.resizing-inspector { cursor: col-resize; user-select: none; }
+body.resizing-inspector .inspector { transition: none; }
+
+/* Inklapbare secties */
+.ins-section { border-bottom: 1px solid var(--line); }
+.ins-section:last-of-type { border-bottom: none; }
+.ins-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  background: transparent;
+  border: none;
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  text-align: left;
+  padding: 10px 2px;
+  cursor: pointer;
+}
+.ins-head:hover { color: var(--accent); }
+.ins-caret { width: 11px; height: 11px; flex: none; transition: transform 0.16s ease; transform: rotate(90deg); }
+.ins-section.collapsed .ins-caret { transform: rotate(0deg); }
+
+/* Open/dicht animeren. `display:none` valt niet te animeren, dus schuift de
+   grid-rij van 1fr naar 0fr — die groeit vanzelf mee met de inhoud. */
+.ins-anim {
+  display: grid;
+  grid-template-rows: 1fr;
+  transition: grid-template-rows 0.22s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.ins-section.collapsed .ins-anim { grid-template-rows: 0fr; }
+.ins-body {
+  overflow: hidden;
+  min-height: 0; /* nodig, anders weigert de grid-rij naar 0 te krimpen */
+  padding: 2px 0 6px;
+  transition: padding 0.22s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.ins-section.collapsed .ins-body { padding-top: 0; padding-bottom: 0; }
+/* Laatste veld in een sectie hoeft geen extra ruimte onderaan. */
+.ins-body > .field:last-child, .ins-body > .switch:last-child { margin-bottom: 4px; }
+
+/* Sectie zonder werking (bv. MIDI terwijl MIDI-besturing uit staat) */
+.ins-section.section-off .ins-head { color: var(--faint); }
+.ins-section.section-off .ins-body { opacity: 0.45; }
+/* Ingeklapte staat — soepel in/uit schuiven. (flex-basis regelt JS.) */
 body.inspector-collapsed .inspector {
-  flex-basis: 0;
   opacity: 0;
   border-left-width: 0;
 }
@@ -263,8 +331,6 @@ input[type="number"], input[type="text"] {
 input[type="number"]:focus, input[type="text"]:focus { outline: none; border-color: var(--accent); }
 input[type="range"] { width: 100%; accent-color: var(--accent); cursor: pointer; }
 
-.inspector-actions { display: flex; gap: 8px; margin-top: 8px; }
-.inspector-actions .btn { flex: 1; }
 .readonly-value {
   padding: 8px 10px;
   font-size: 13px;
@@ -420,32 +486,136 @@ body.dragging .drop-overlay { display: flex; }
 .modal-close { background: transparent; border: none; color: var(--muted); font-size: 24px; line-height: 1; cursor: pointer; padding: 0 4px; }
 .modal-close:hover { color: var(--text); }
 
-/* Tabs */
-.tabs { display: flex; gap: 4px; padding: 0 16px; border-bottom: 1px solid var(--line); }
-.tab {
+/* Instellingen: zijbalk-navigatie links, inhoud rechts */
+.settings-card {
+  width: min(860px, calc(100vw - 32px));
+  height: min(620px, calc(100vh - 64px));
+  max-height: calc(100vh - 64px);
+  flex-direction: row;
+  overflow: hidden;
+}
+.settings-nav {
+  flex: none;
+  width: 216px;
+  background: var(--panel-2);
+  border-right: 1px solid var(--line);
+  padding: 12px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  overflow-y: auto;
+}
+.settings-nav nav { display: flex; flex-direction: column; gap: 2px; }
+
+.settings-nav .tab {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  width: 100%;
   background: transparent;
   border: none;
+  border-radius: 9px;
   color: var(--muted);
-  font-size: 13px;
+  font-size: 13.5px;
   font-weight: 500;
-  padding: 10px 12px;
+  text-align: left;
+  padding: 9px 11px;
   cursor: pointer;
-  position: relative;
-  border-bottom: 2px solid transparent;
-  margin-bottom: -1px;
-  transition: color 0.12s;
+  transition: background 0.12s, color 0.12s;
 }
-.tab:hover { color: var(--text); }
-.tab.active { color: var(--text); border-bottom-color: var(--accent); }
+.settings-nav .tab svg { width: 17px; height: 17px; flex: none; fill: currentColor; }
+.settings-nav .tab:hover { color: var(--text); background: var(--line); }
+.settings-nav .tab.active { color: var(--text); background: var(--line-strong); }
 
-.modal-body { padding: 18px 20px 20px; overflow: auto; }
+.settings-main { display: flex; flex-direction: column; flex: 1; min-width: 0; }
+.settings-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 16px 16px 14px 24px;
+  border-bottom: 1px solid var(--line);
+}
+.settings-head h2 { margin: 0; font-size: 19px; font-weight: 600; }
+.settings-head .modal-close {
+  width: 34px; height: 34px; flex: none;
+  display: flex; align-items: center; justify-content: center;
+  border-radius: 9px;
+}
+.settings-head .modal-close:hover { background: var(--line); }
+
+.modal-body { padding: 18px 24px 24px; overflow: auto; flex: 1; }
+.tab-panel[hidden] { display: none; }
+
+/* Smal scherm: zijbalk wordt een rij bovenaan */
+@media (max-width: 720px) {
+  .settings-card { flex-direction: column; height: min(640px, calc(100vh - 32px)); }
+  .settings-nav {
+    width: auto; border-right: none; border-bottom: 1px solid var(--line);
+    flex-direction: row; align-items: center; gap: 6px; padding: 8px;
+  }
+  .settings-nav nav { flex-direction: row; overflow-x: auto; gap: 4px; }
+  .settings-nav .tab { white-space: nowrap; }
+  .settings-nav .tab svg { display: none; }
+}
+
+/* Tabs (overige modals) */
+.tabs { display: flex; gap: 4px; padding: 0 16px; border-bottom: 1px solid var(--line); }
 .tab-panel[hidden] { display: none; }
 .settings-note { margin: 4px 0 12px; color: var(--muted); font-size: 12px; line-height: 1.5; }
 .settings-actions { display: flex; gap: 10px; margin-top: 4px; }
 .tab-panel[data-panel="project"] .switch { margin: 8px 0 18px; }
 .switch + .switch { margin-top: 14px; }
-.settings-lock { margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--line); }
+.settings-lock { margin: 4px 0 16px; }
 .settings-lock .settings-note { margin-bottom: 10px; }
+
+/* Besturing-tab */
+.control-section { margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--line); }
+.control-section:first-of-type { margin-top: 10px; }
+.control-title { margin: 0 0 6px; font-size: 13px; font-weight: 600; }
+.control-code {
+  margin: 8px 0 0; padding: 12px 14px; border-radius: 8px;
+  background: var(--panel-2, #191c23); border: 1px solid var(--line);
+  color: var(--muted); font: 12px/1.6 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  white-space: pre; overflow-x: auto;
+}
+/* MIDI-trigger in de inspector */
+.midi-trigger-row { display: flex; align-items: center; gap: 8px; }
+.midi-trigger-row .kb-key { flex: 1; text-align: center; }
+.midi-trigger-row .kb-key:disabled { opacity: 0.45; cursor: default; }
+.midi-trigger-row .kb-key:disabled:hover { border-color: var(--line-strong); }
+
+/* MIDI-rij heeft 3 kolommen: label rekt uit, de knoppen blijven rechts bij elkaar. */
+#midiList .kb-label { flex: 1; }
+#midiList .kb-key { min-width: 118px; text-align: center; }
+.kb-clear { padding: 5px 10px; font-size: 11px; flex: none; }
+.kb-clear:disabled { opacity: 0.4; cursor: default; }
+/* Recente projecten */
+.recent-list { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+.recent-row { display: flex; align-items: center; gap: 8px; }
+.recent-open {
+  flex: 1; min-width: 0;
+  display: flex; align-items: baseline; gap: 10px;
+  padding: 10px 12px; border-radius: 9px;
+  background: var(--panel-2); border: 1px solid var(--line);
+  color: var(--text); font: inherit; font-size: 13px; text-align: left; cursor: pointer;
+  transition: border-color 0.12s, background 0.12s;
+}
+.recent-open:hover { border-color: var(--accent); }
+.recent-row.current .recent-open { border-color: var(--accent); background: var(--accent-soft, #172033); }
+.recent-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
+.recent-meta { color: var(--faint); font-size: 11px; flex: none; }
+
+.remote-urls { display: flex; flex-direction: column; gap: 6px; margin: 8px 0 10px; }
+.remote-url {
+  padding: 9px 12px; border-radius: 8px; border: 1px solid var(--line);
+  background: var(--panel-2, #191c23); color: var(--accent, #4c8dff);
+  font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  text-decoration: none; word-break: break-all;
+}
+.remote-url:hover { border-color: var(--accent, #4c8dff); }
+#controlServerStatus, #oscStatus { padding: 8px 10px; border-radius: 8px; border: 1px solid var(--line); }
+#controlServerStatus.ok, #oscStatus.ok { color: var(--play, #35c88f); border-color: rgba(53, 200, 143, 0.4); }
+.control-code code, .settings-note code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; color: var(--text); }
+/* Server-afhankelijke opties verbergen tenzij CueGo lokaal draait. */
+body:not(.has-server) .server-only { display: none !important; }
 
 /* Keybind editor */
 .preset-row { display: flex; align-items: center; gap: 8px; margin-bottom: 14px; }

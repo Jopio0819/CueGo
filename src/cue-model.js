@@ -44,6 +44,7 @@ export function createCue(file) {
     outPoint: '', // eindpunt in seconden; leeg = einde van de audio
     autoContinue: false, // na afloop automatisch de volgende cue starten
     autoContinueDelay: 1, // wachttijd (s) voor auto-doorgaan
+    midiTrigger: '', // MIDI-handtekening die deze cue start (bv. 'note:0:60'); leeg = geen
   };
 }
 

@@ -7,3 +7,9 @@ testaudio/
 # Geëxporteerde shows / presets (horen niet in de repo)
 *.webqlab
 *.webqlabkeys
+
+# Opgeslagen shows (lokale opslag van "Recente projecten")
+projects/
+
+# Gedeelde show (server is eigenaar bij zelf-hosten)
+show/

@@ -26,6 +26,7 @@ export async function exportProject(cues, settings, keybinds = null) {
       outPoint: c.outPoint || '',
       autoContinue: !!c.autoContinue,
       autoContinueDelay: c.autoContinueDelay ?? 1,
+      midiTrigger: c.midiTrigger || '',
       fileName: c.file.name,
       fileType: c.file.type,
       size: buf.byteLength,
@@ -53,7 +54,7 @@ export async function importProject(arrayBuffer) {
     const slice = arrayBuffer.slice(offset, offset + m.size);
     offset += m.size;
     const file = new File([slice], m.fileName || `${m.name}.audio`, { type: m.fileType || 'audio/*' });
-    cues.push({ id: m.id, number: m.number || '', name: m.name, fadeIn: m.fadeIn, fadeOut: m.fadeOut, fadeOutAtEnd: !!m.fadeOutAtEnd, volume: m.volume, loop: !!m.loop, loopCount: m.loopCount || '', loopCrossfade: m.loopCrossfade || 0, inPoint: m.inPoint || 0, outPoint: m.outPoint || '', autoContinue: !!m.autoContinue, autoContinueDelay: m.autoContinueDelay ?? 1, file });
+    cues.push({ id: m.id, number: m.number || '', name: m.name, fadeIn: m.fadeIn, fadeOut: m.fadeOut, fadeOutAtEnd: !!m.fadeOutAtEnd, volume: m.volume, loop: !!m.loop, loopCount: m.loopCount || '', loopCrossfade: m.loopCrossfade || 0, inPoint: m.inPoint || 0, outPoint: m.outPoint || '', autoContinue: !!m.autoContinue, autoContinueDelay: m.autoContinueDelay ?? 1, midiTrigger: m.midiTrigger || '', file });
   }
   return { settings: header.settings || {}, keybinds: header.keybinds || null, cues };
 }

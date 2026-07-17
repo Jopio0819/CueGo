@@ -3,9 +3,16 @@ import { AudioEngine } from './audio-engine.js';
 import { CueList, isAudioFile } from './cue-model.js';
 import { saveAudio, loadAudio, deleteAudio, saveMeta, loadMeta } from './storage.js';
 import { exportProject, importProject } from './project.js';
+import { createControl, publicApi, detectServer } from './control.js';
+import { connectAppLink } from './net-remote.js';
+import { createMidi, describeSignature, MIDI_SUPPORTED } from './midi.js';
+import { createProjectStore } from './projects-store.js';
 
 const engine = new AudioEngine();
 const cues = new CueList();
+
+// Besturings-events (window.cuego.on(...)). No-op tot de control is aangemaakt.
+let emit = () => {};
 
 // Meervoudige selectie (voor shift-selecteren + samen verwijderen).
 const selection = new Set(); // cue-ids
@@ -13,7 +20,7 @@ let anchorIndex = -1;
 
 // Instellingen (persist in localStorage).
 const SETTINGS_KEY = 'webqlab.settings.v1';
-const defaultSettings = { defaultFadeIn: 0, defaultFadeOut: 3, singleCueMode: false, blockBrowserKeys: true, inspectorHidden: false, saveKeybindsWithProject: false };
+const defaultSettings = { defaultFadeIn: 0, defaultFadeOut: 3, singleCueMode: false, blockBrowserKeys: true, inspectorHidden: false, saveKeybindsWithProject: false, midiEnabled: false, remoteEnabled: true, inspectorWidth: 290 };
 const _loadedSettings = loadSettings();
 const settings = { ...defaultSettings, ..._loadedSettings };
 // Migratie: oude 'escFade'-instelling → 'defaultFadeOut'.
@@ -116,6 +123,7 @@ function render() {
   });
 
   syncTransport();
+  emit('statechange');
 }
 
 function startInlineNumberEdit(cell, cue) {
@@ -198,8 +206,21 @@ function syncInspector() {
   const cue = cues.selected;
   if (!cue) { inspector.hidden = true; return; }
   inspector.hidden = false;
-  $('insNumber').value = cue.number || '';
-  $('insName').value = cue.name;
+
+  // Bij een meervoudige selectie is één cue's naam tonen misleidend — dan lijkt het
+  // alsof die naam voor alles geldt. Verschillen ze? Toon een streepje als placeholder.
+  const selCues = selection.size > 1
+    ? [...selection].map((id) => cues.getById(id)).filter(Boolean)
+    : [cue];
+  const shared = (field) => (selCues.every((c) => c[field] === selCues[0][field]) ? selCues[0][field] : null);
+
+  const sharedName = shared('name');
+  $('insName').value = sharedName ?? '';
+  $('insName').placeholder = sharedName === null ? '—' : '';
+
+  const sharedNumber = shared('number');
+  $('insNumber').value = sharedNumber ?? '';
+  $('insNumber').placeholder = sharedNumber === null ? '—' : '—';
   $('insFadeIn').value = cue.fadeIn;
   $('insFadeOut').value = cue.fadeOut;
   $('insFadeOutEnd').checked = !!cue.fadeOutAtEnd;
@@ -216,6 +237,7 @@ function syncInspector() {
   $('insAutoDelay').value = cue.autoContinueDelay ?? 1;
   $('autoContinueField').hidden = !cue.autoContinue;
   showInspectorDuration(cue);
+  syncCueMidi();
   syncPreviewBar();
 }
 
@@ -298,6 +320,7 @@ function customConfirm(message, { title = 'Bevestigen', okLabel = 'Bevestigen' }
       window.removeEventListener('keydown', onKey, true);
       $('confirmOk').removeEventListener('click', onOk);
       modal.querySelectorAll('[data-confirm-cancel]').forEach((el) => el.removeEventListener('click', onCancel));
+      document.activeElement?.blur?.(); // focus niet in de gesloten dialoog laten hangen
       modal.classList.remove('open');
       setTimeout(() => { modal.hidden = true; }, 200);
       resolve(result);
@@ -402,9 +425,8 @@ function bindInspector() {
     persist();
   });
 
-  $('moveUpBtn').addEventListener('click', () => withSelected((c) => { cues.move(c.id, -1); render(); persist(); }));
-  $('moveDownBtn').addEventListener('click', () => withSelected((c) => { cues.move(c.id, 1); render(); persist(); }));
-  $('deleteBtn').addEventListener('click', deleteSelected);
+  // Geen ↑/↓/Verwijder-knoppen meer in de inspector: herordenen doe je door te
+  // slepen, verwijderen met de Delete-toets.
 }
 
 function withSelected(fn) { const cue = cues.selected; if (cue) fn(cue); }
@@ -430,6 +452,7 @@ function deleteSelected() {
 // Aangeroepen als een cue eindigt. Bij een natuurlijk einde (uitgespeeld, niet
 // weggefade/gestopt) selecteren we alvast de volgende cue — zonder die te spelen.
 function onCueEnded(cue, info) {
+  if (cue) emit('cueend', { id: cue.id, number: cue.number, name: cue.name, natural: !!info?.natural });
   if (info?.natural && cue) {
     const idx = cues.cues.findIndex((c) => c.id === cue.id);
     if (idx !== -1 && idx + 1 < cues.cues.length) {
@@ -465,6 +488,7 @@ async function playCue(cue, opts = {}) {
     alert(`Kon "${cue.name}" niet afspelen: ${err.message}`);
     return;
   }
+  emit('cuestart', { id: cue.id, number: cue.number, name: cue.name });
   render();
   animateProgress();
 }
@@ -485,6 +509,7 @@ async function playAll() {
 function go() {
   const cue = cues.selected;
   if (!cue) return;
+  emit('go', { id: cue.id, number: cue.number, name: cue.name });
   playCue(cue); // herstart als hij al speelt → nooit dubbel
   cues.advance();
   selectOnly(cues.selected.id, cues.selectedIndex);
@@ -559,6 +584,7 @@ async function transitionBetween(a, b, fade) {
 }
 
 function panic() {
+  emit('panic');
   // Elke spelende cue faadt uit over zijn eigen fade-uit-tijd.
   const fades = [...engine.voices.values()].map((v) => Math.max(0, parseFloat(v.cue?.fadeOut) || 0));
   engine.fadeOutAll();
@@ -960,8 +986,9 @@ let locked = false;
 const LOCK_EDIT_IDS = [
   'insNumber', 'insName', 'insFadeIn', 'insFadeOut', 'insFadeOutEnd', 'insVolume', 'insLoop',
   'insLoopCount', 'insLoopCrossfade', 'insInPoint', 'insOutPoint', 'insAutoContinue', 'insAutoDelay',
-  'moveUpBtn', 'moveDownBtn', 'deleteBtn', 'pickFolderBtn', 'pickFilesBtn',
+  'pickFolderBtn', 'pickFilesBtn',
   'setFadeIn', 'setFadeOut', 'setSingleCue', 'setBlockKeys', 'setSaveKeybinds', 'openKeysBtn', 'openProjectBtn', 'newProjectBtn',
+  'setMidi',
 ];
 
 function hasPassword() { try { return !!JSON.parse(localStorage.getItem(LOCK_KEY)); } catch { return false; } }
@@ -1019,6 +1046,7 @@ function applyLockState() {
   lockBtn.title = locked ? 'Ontgrendelen (bewerken is vergrendeld)' : 'Vergrendelen';
   lockBtn.querySelector('.ic-locked').hidden = !locked;
   lockBtn.querySelector('.ic-unlocked').hidden = locked;
+  syncCueMidi(); // trigger-veld hangt van lock én MIDI-status af
   render(); // draggable-status van rijen bijwerken
 }
 
@@ -1052,6 +1080,9 @@ function customPrompt({ title = 'Invoer', message = '', okLabel = 'OK', inputTyp
       $('promptOk').removeEventListener('click', onOk);
       input.removeEventListener('keydown', onInputKey);
       modal.querySelectorAll('[data-prompt-cancel]').forEach((el) => el.removeEventListener('click', onCancel));
+      // Focus loslaten! Blijft die in het (verborgen) invoerveld hangen, dan denkt
+      // isTyping() dat je typt en werkt geen enkele sneltoets meer — ook spatie/GO niet.
+      input.blur();
       modal.classList.remove('open');
       setTimeout(() => { modal.hidden = true; }, 180);
       resolve(val);
@@ -1074,6 +1105,7 @@ function customPrompt({ title = 'Invoer', message = '', okLabel = 'OK', inputTyp
 function openSettings() {
   syncSettingsForm();
   renderKeybinds();
+  selectTab('play'); // altijd bovenaan beginnen, niet waar je vorige keer was
   settingsModal.hidden = false;
   void settingsModal.offsetWidth; // forceer reflow zodat de begintoestand telt
   settingsModal.classList.add('open'); // triggert de fade/scale-in
@@ -1085,8 +1117,15 @@ function closeSettings() {
 }
 
 function selectTab(name) {
-  settingsModal.querySelectorAll('.tab').forEach((t) => t.classList.toggle('active', t.dataset.tab === name));
+  let title = '';
+  settingsModal.querySelectorAll('.tab').forEach((t) => {
+    const on = t.dataset.tab === name;
+    t.classList.toggle('active', on);
+    if (on) title = t.textContent.trim(); // kop volgt de gekozen pagina
+  });
   settingsModal.querySelectorAll('.tab-panel').forEach((p) => (p.hidden = p.dataset.panel !== name));
+  const heading = $('settingsTitle');
+  if (heading && title) heading.textContent = title;
 }
 
 function syncSettingsForm() {
@@ -1095,7 +1134,10 @@ function syncSettingsForm() {
   $('setSingleCue').checked = settings.singleCueMode;
   $('setBlockKeys').checked = settings.blockBrowserKeys;
   $('setSaveKeybinds').checked = settings.saveKeybindsWithProject;
+  if ($('setRemote')) $('setRemote').checked = settings.remoteEnabled !== false;
   updateLockSettingsUI();
+  updateControlTab();
+  updateMidiUI();
 }
 
 // Toon de vergrendel-status en de instellen/verwijderen-knop in de instellingen.
@@ -1213,6 +1255,7 @@ function bindSettings() {
 
   $('newProjectBtn').addEventListener('click', newProject);
   $('saveProjectBtn').addEventListener('click', saveProject);
+  $('downloadProjectBtn').addEventListener('click', downloadProject);
   $('openProjectBtn').addEventListener('click', () => $('projectInput').click());
   $('projectInput').addEventListener('change', async (e) => {
     const file = e.target.files[0];
@@ -1236,6 +1279,7 @@ function askSaveChoice() {
       $('confirmOk').removeEventListener('click', onOk);
       alt.removeEventListener('click', onAlt);
       modal.querySelectorAll('[data-confirm-cancel]').forEach((el) => el.removeEventListener('click', onCancel));
+      document.activeElement?.blur?.(); // focus niet in de gesloten dialoog laten hangen
       modal.classList.remove('open');
       setTimeout(() => { modal.hidden = true; alt.hidden = true; }, 180);
       resolve(val);
@@ -1273,30 +1317,147 @@ async function newProject() {
   persist();
   dirty = false; // lege, verse show
   setProjectName('Naamloos');
+  renderRecentProjects(); // 'huidige'-markering klopt niet meer
   closeSettings();
 }
 
-// Slaat op onder een door de gebruiker gekozen naam. Geeft true bij succes.
-async function saveProject() {
-  if (cues.cues.length === 0) { await customConfirm('Er zijn nog geen cues om op te slaan.', { title: 'Opslaan', okLabel: 'OK' }); return false; }
-  const name = await customPrompt({
-    title: 'Show opslaan', message: 'Geef de show een naam.', okLabel: 'Opslaan',
+// Bouw het projectbestand van de huidige show.
+async function buildProjectBlob() {
+  const kb = settings.saveKeybindsWithProject ? keybinds : null; // optioneel sneltoetsen meenemen
+  return await exportProject(cues.cues, settings, kb);
+}
+
+async function askProjectName(title) {
+  if (cues.cues.length === 0) { await customConfirm('Er zijn nog geen cues om op te slaan.', { title, okLabel: 'OK' }); return null; }
+  return await customPrompt({
+    title, message: 'Geef de show een naam.', okLabel: 'Opslaan',
     inputType: 'text', defaultValue: projectName,
     validate: (v) => (v && v.trim() ? true : 'Voer een naam in.'),
   });
+}
+
+// Opslaan bij 'Recente projecten': lokaal als bestand in projects/, statisch
+// gehost in de browseropslag. Geeft true bij succes.
+async function saveProject() {
+  const name = await askProjectName('Show opslaan');
   if (name == null) return false;
   setProjectName(name);
-  const filename = projectName.replace(/[^\w\-. ]+/g, '_') + '.cgo';
   try {
-    const kb = settings.saveKeybindsWithProject ? keybinds : null; // optioneel sneltoetsen meenemen
-    const blob = await exportProject(cues.cues, settings, kb);
-    downloadBlob(blob, filename);
+    const blob = await buildProjectBlob();
+    await projectStore.save(projectName, blob, Date.now());
     dirty = false;
+    await renderRecentProjects();
     return true;
   } catch (err) {
     console.error(err);
     await customConfirm('Opslaan mislukt: ' + err.message, { title: 'Fout', okLabel: 'OK' });
     return false;
+  }
+}
+
+// Los bestand downloaden (los van de recente-projectenlijst).
+async function downloadProject() {
+  const name = await askProjectName('Show downloaden');
+  if (name == null) return false;
+  setProjectName(name);
+  try {
+    const blob = await buildProjectBlob();
+    downloadBlob(blob, projectName.replace(/[^\w\-. ]+/g, '_') + '.webqlab');
+    dirty = false;
+    return true;
+  } catch (err) {
+    console.error(err);
+    await customConfirm('Downloaden mislukt: ' + err.message, { title: 'Fout', okLabel: 'OK' });
+    return false;
+  }
+}
+
+// --- Recente projecten -----------------------------------------------------
+
+let projectStore = null;
+
+function fmtSize(bytes) {
+  if (!bytes) return '';
+  const mb = bytes / 1048576;
+  return mb >= 1 ? `${mb.toFixed(1)} MB` : `${Math.max(1, Math.round(bytes / 1024))} kB`;
+}
+function fmtWhen(ms) {
+  if (!ms) return '';
+  const d = new Date(ms);
+  return d.toLocaleDateString('nl-NL', { day: 'numeric', month: 'short' }) + ' ' +
+    d.toLocaleTimeString('nl-NL', { hour: '2-digit', minute: '2-digit' });
+}
+
+async function renderRecentProjects() {
+  const list = $('recentProjects');
+  const note = $('recentNote');
+  if (!list || !projectStore) return;
+
+  if (note) {
+    note.textContent = projectStore.kind === 'server'
+      ? 'Opgeslagen als bestand in de map projects/ naast de server — gewoon te kopiëren en te backuppen.'
+      : 'Opgeslagen in de browseropslag van dit apparaat (er is geen server om naartoe te schrijven). Wil je een echt bestand? Gebruik Downloaden.';
+  }
+
+  let items = [];
+  try { items = await projectStore.list(); } catch (err) { console.warn('Projecten ophalen mislukt:', err); }
+
+  list.innerHTML = '';
+  if (!items.length) {
+    const p = document.createElement('p');
+    p.className = 'settings-note';
+    p.textContent = 'Nog geen opgeslagen shows.';
+    list.appendChild(p);
+    return;
+  }
+
+  for (const it of items) {
+    const row = document.createElement('div');
+    row.className = 'recent-row' + (it.name === projectName ? ' current' : '');
+
+    const open = document.createElement('button');
+    open.className = 'recent-open';
+    open.innerHTML = `<span class="recent-name"></span><span class="recent-meta"></span>`;
+    open.querySelector('.recent-name').textContent = it.name;
+    open.querySelector('.recent-meta').textContent = [fmtWhen(it.savedAt), fmtSize(it.size)].filter(Boolean).join(' · ');
+    open.addEventListener('click', () => openRecentProject(it.name));
+
+    const del = document.createElement('button');
+    del.className = 'btn kb-clear';
+    del.textContent = 'Verwijder';
+    del.addEventListener('click', (e) => { e.stopPropagation(); deleteRecentProject(it.name); });
+
+    row.append(open, del);
+    list.appendChild(row);
+  }
+}
+
+async function openRecentProject(name) {
+  if (locked) return;
+  if (!(await confirmDiscardChanges())) return;
+  try {
+    const blob = await projectStore.load(name);
+    if (!blob) throw new Error('Project niet gevonden');
+    const proj = await importProject(await blob.arrayBuffer());
+    await loadProject(proj);
+    setProjectName(name);
+    await renderRecentProjects();
+    closeSettings();
+  } catch (err) {
+    console.error(err);
+    await customConfirm('Openen mislukt: ' + err.message, { title: 'Fout', okLabel: 'OK' });
+  }
+}
+
+async function deleteRecentProject(name) {
+  if (locked) return;
+  const ok = await customConfirm(`"${name}" definitief verwijderen?`, { title: 'Project verwijderen', okLabel: 'Verwijderen' });
+  if (!ok) return;
+  try {
+    await projectStore.remove(name);
+    await renderRecentProjects();
+  } catch (err) {
+    await customConfirm('Verwijderen mislukt: ' + err.message, { title: 'Fout', okLabel: 'OK' });
   }
 }
 
@@ -1447,6 +1608,411 @@ function captureKey(e) {
   renderKeybinds();
 }
 
+// --- Besturings-API (window.cuego + transports) ----------------------------
+
+// Zoek een cue op via referentie: null → geselecteerde cue; anders match op
+// zichtbaar nummer, dan op 1-gebaseerde positie, dan op id.
+function resolveCue(ref) {
+  if (ref == null || ref === '') return cues.selected;
+  const s = String(ref);
+  let c = cues.cues.find((x) => String(x.number) === s);
+  if (c) return c;
+  const n = parseInt(s, 10);
+  if (String(n) === s && n >= 1 && n <= cues.cues.length) return cues.cues[n - 1];
+  return cues.getById(s) || null;
+}
+
+// Speel een specifieke cue (of de geselecteerde) — selecteert 'm, schuift níet door.
+function apiPlay(ref) {
+  const cue = resolveCue(ref);
+  if (!cue) return;
+  const idx = cues.cues.indexOf(cue);
+  selectOnly(cue.id, idx);
+  syncInspector();
+  playCue(cue);
+}
+
+// Selecteer via richting ('up'/'down'/'next'/'prev'/'first'/'last') of een cue-referentie.
+function apiSelect(dirOrCue) {
+  if (!cues.cues.length) return;
+  const d = String(dirOrCue ?? '').toLowerCase();
+  if (d === 'up' || d === 'prev' || d === 'previous') return moveSel(-1, false);
+  if (d === 'down' || d === 'next') return moveSel(1, false);
+  if (d === 'first') { selectOnly(cues.cues[0].id, 0); render(); syncInspector(); return; }
+  if (d === 'last') { const i = cues.cues.length - 1; selectOnly(cues.cues[i].id, i); render(); syncInspector(); return; }
+  const cue = resolveCue(dirOrCue);
+  if (cue) { const i = cues.cues.indexOf(cue); selectOnly(cue.id, i); render(); syncInspector(); }
+}
+
+// Reset (QLab-gedrag): alles direct stoppen en de playhead terug naar de eerste cue.
+function apiReset() {
+  engine.stopAll();
+  if (cues.cues.length) selectOnly(cues.cues[0].id, 0);
+  render();
+  syncInspector();
+}
+
+async function apiPause() {
+  const cue = transportCue();
+  if (cue && engine.isPlaying(cue.id)) { engine.pause(cue.id); render(); syncTransportProgress(); }
+}
+async function apiResume() {
+  const cue = transportCue();
+  if (!cue) return;
+  if (engine.isPaused(cue.id)) { if (settings.singleCueMode) fadeOutOthers(cue.id); await engine.resume(cue.id); }
+  else if (!engine.isPlaying(cue.id)) { await playCue(cue); }
+  render();
+  animateProgress();
+  syncTransportProgress();
+}
+
+// Momentopname van de toestand (voor de netwerk-remote e.d.).
+function apiState() {
+  return {
+    projectName,
+    locked,
+    // Eén bron van waarheid: elke remote leest dit uit dezelfde toestand, dus
+    // alle apparaten tonen gegarandeerd hetzelfde.
+    remoteEnabled: settings.remoteEnabled !== false,
+    selectedId: cues.selected?.id ?? null,
+    cues: cues.cues.map((c, i) => ({
+      id: c.id,
+      index: i + 1,
+      number: c.number || '',
+      name: c.name,
+      selected: selection.has(c.id),
+      playing: engine.isPlaying(c.id),
+      paused: engine.isPaused(c.id),
+      position: engine.position(c.id) || 0,
+      duration: engine.playLength(c) || 0,
+    })),
+  };
+}
+
+const control = createControl({
+  go, playAll,
+  play: apiPlay,
+  stop: hardStop,
+  reset: apiReset,
+  panic,
+  pause: apiPause,
+  resume: apiResume,
+  toggle: transportToggle,
+  select: apiSelect,
+  transition: openFadeInPrompt,
+  state: apiState,
+});
+emit = control.emit;
+window.cuego = publicApi(control);
+
+// --- MIDI-controller -------------------------------------------------------
+
+const MIDI_KEY = 'webqlab.midi.v1';
+// Wat je aan een knop van je controller kunt koppelen (loopt via dezelfde command-bus).
+const MIDI_ACTIONS = [
+  { id: 'go', label: 'GO — speel + selecteer volgende', cmd: 'go' },
+  { id: 'panic', label: 'Panic — fade alles uit (Esc)', cmd: 'panic' },
+  { id: 'stop', label: 'Stop — direct stoppen', cmd: 'stop' },
+  { id: 'pause', label: 'Pause', cmd: 'pause' },
+  { id: 'resume', label: 'Resume', cmd: 'resume' },
+  { id: 'toggle', label: 'Afspelen / pauze (wisselen)', cmd: 'toggle' },
+  { id: 'reset', label: 'Reset — stop + terug naar de eerste cue', cmd: 'reset' },
+  { id: 'selectUp', label: 'Vorige cue selecteren', cmd: 'select', args: { dir: 'up' } },
+  { id: 'selectDown', label: 'Volgende cue selecteren', cmd: 'select', args: { dir: 'down' } },
+  { id: 'transition', label: 'Transition (fade-in / crossfade)', cmd: 'transition' },
+  { id: 'playAll', label: 'Alles tegelijk starten', cmd: 'playAll' },
+];
+
+let midiBinds = loadMidiBinds(); // { actionId: 'note:0:60' }
+let midiLearning = null; // actie die nu op een knopdruk wacht
+let midiDevices = [];
+
+function loadMidiBinds() {
+  try { return JSON.parse(localStorage.getItem(MIDI_KEY)) || {}; } catch { return {}; }
+}
+function saveMidiBinds() {
+  try { localStorage.setItem(MIDI_KEY, JSON.stringify(midiBinds)); } catch { /* negeer */ }
+}
+
+const midi = createMidi({
+  // Knop ingedrukt → eerst een globale actie, anders een cue met deze trigger.
+  onTrigger: (sig) => {
+    const hit = MIDI_ACTIONS.find((a) => midiBinds[a.id] === sig);
+    if (hit) { control.dispatch(hit.cmd, hit.args); return; }
+    const cue = cues.cues.find((c) => c.midiTrigger === sig);
+    if (cue) control.dispatch('play', { cue: cue.id });
+  },
+  onDevices: (names) => { midiDevices = names; updateMidiUI(); },
+});
+
+// Eén knop hoort bij één ding. Haal een handtekening overal weg (globale acties én
+// cue-triggers) behalve bij degene die 'm zojuist claimde.
+function clearMidiSignature(sig, { keepActionId, keepCueId } = {}) {
+  for (const a of MIDI_ACTIONS) {
+    if (a.id !== keepActionId && midiBinds[a.id] === sig) delete midiBinds[a.id];
+  }
+  let cueChanged = false;
+  for (const c of cues.cues) {
+    if (c.id !== keepCueId && c.midiTrigger === sig) { c.midiTrigger = ''; cueChanged = true; }
+  }
+  saveMidiBinds();
+  if (cueChanged) persist();
+  return cueChanged;
+}
+
+async function setMidiEnabled(on) {
+  if (on) {
+    try {
+      await midi.enable();
+      settings.midiEnabled = true;
+    } catch (err) {
+      settings.midiEnabled = false;
+      $('setMidi').checked = false;
+      await customConfirm(`MIDI kon niet worden ingeschakeld: ${err.message}`, { title: 'MIDI', okLabel: 'OK' });
+    }
+  } else {
+    midi.disable();
+    midiLearning = null;
+    settings.midiEnabled = false;
+  }
+  saveSettings();
+  updateMidiUI();
+}
+
+// Toon status, apparaten en de koppelingen.
+function updateMidiUI() {
+  const note = $('midiNote');
+  const list = $('midiList');
+  const hint = $('midiHint');
+  const field = $('midiSwitchField');
+  if (!note || !list) return;
+
+  if (!MIDI_SUPPORTED) {
+    // Pagina blijft bereikbaar, maar legt uit waarom er niets te kiezen valt.
+    note.textContent = 'Web MIDI wordt niet ondersteund in deze browser. Gebruik Chrome of Edge (en https of localhost).';
+    if (field) field.hidden = true;
+    list.hidden = true;
+    if (hint) hint.hidden = true;
+    return;
+  }
+  if (field) field.hidden = false;
+  $('setMidi').checked = !!settings.midiEnabled;
+
+  if (settings.midiEnabled) {
+    note.textContent = midiDevices.length
+      ? `Verbonden: ${midiDevices.join(', ')}`
+      : 'Ingeschakeld, maar geen MIDI-apparaat gevonden. Sluit je controller aan.';
+  } else {
+    note.textContent = 'Bedien CueGo met een foot pedal of MIDI-knoppen. Werkt in de browser, geen server nodig.';
+  }
+  list.hidden = !settings.midiEnabled;
+  if (hint) hint.hidden = !settings.midiEnabled;
+  if (settings.midiEnabled) renderMidiBinds();
+  syncCueMidi(); // het trigger-veld in de inspector volgt de MIDI-status
+}
+
+function renderMidiBinds() {
+  const list = $('midiList');
+  list.innerHTML = '';
+  for (const a of MIDI_ACTIONS) {
+    const row = document.createElement('div');
+    row.className = 'keybind-row';
+
+    const label = document.createElement('span');
+    label.className = 'kb-label';
+    label.textContent = a.label;
+
+    const btn = document.createElement('button');
+    const learning = midiLearning === a.id;
+    btn.className = 'kb-key' + (learning ? ' capturing' : '');
+    btn.textContent = learning ? 'Druk op een knop…' : describeSignature(midiBinds[a.id]);
+    btn.addEventListener('click', () => {
+      if (locked) return;
+      if (learning) { midi.cancelLearn(); midiLearning = null; renderMidiBinds(); return; }
+      midiLearning = a.id;
+      renderMidiBinds();
+      midi.learn((sig) => {
+        // Dezelfde knop nooit aan twee dingen koppelen (ook niet aan een cue).
+        const cueChanged = clearMidiSignature(sig, { keepActionId: a.id });
+        midiBinds[a.id] = sig;
+        midiLearning = null;
+        saveMidiBinds();
+        renderMidiBinds();
+        if (cueChanged) syncInspector();
+      });
+    });
+
+    const clear = document.createElement('button');
+    clear.className = 'btn kb-clear';
+    clear.textContent = 'Wissen';
+    clear.disabled = !midiBinds[a.id] || locked;
+    clear.addEventListener('click', () => {
+      delete midiBinds[a.id];
+      saveMidiBinds();
+      renderMidiBinds();
+    });
+
+    row.append(label, btn, clear);
+    list.appendChild(row);
+  }
+}
+
+function bindMidiSettings() {
+  const sw = $('setMidi');
+  if (sw) sw.addEventListener('change', (e) => setMidiEnabled(e.target.checked));
+
+  // Afstandsbediening aan/uit. De status zit in de toestand die we pushen, dus
+  // elk verbonden apparaat ziet de wijziging meteen (en de server weigert commando's).
+  const rw = $('setRemote');
+  if (rw) rw.addEventListener('change', (e) => {
+    settings.remoteEnabled = e.target.checked;
+    saveSettings();
+    appLink?.pushState(true); // direct doorgeven, niet wachten op de volgende tick
+    updateControlTab();
+  });
+}
+
+// --- MIDI-trigger per cue (inspector) --------------------------------------
+
+let cueLearning = null; // cue-id dat op een knopdruk wacht
+
+// Een cue-trigger hoort bij één cue, dus dit werkt op de primaire selectie
+// (niet op alle geselecteerde cues — twee cues met dezelfde knop kan niet).
+function syncCueMidi() {
+  const btn = $('insMidiTrigger');
+  const clear = $('insMidiClear');
+  const hint = $('insMidiHint');
+  if (!btn) return;
+  const cue = cues.selected;
+  const learning = cue && cueLearning === cue.id;
+
+  btn.classList.toggle('capturing', !!learning);
+  btn.textContent = learning ? 'Druk op een knop…' : describeSignature(cue?.midiTrigger);
+  const usable = MIDI_SUPPORTED && settings.midiEnabled && !locked;
+  btn.disabled = !usable;
+  clear.disabled = !usable || !cue?.midiTrigger;
+  if (hint) {
+    hint.textContent = !MIDI_SUPPORTED ? '(MIDI niet ondersteund)'
+      : !settings.midiEnabled ? '(zet MIDI aan bij Instellingen → MIDI)'
+      : '';
+  }
+  // Hele sectie grijs zolang MIDI-besturing niet aan staat.
+  const section = document.querySelector('.ins-section[data-section="midi"]');
+  if (section) section.classList.toggle('section-off', !(MIDI_SUPPORTED && settings.midiEnabled));
+}
+
+function bindCueMidi() {
+  const btn = $('insMidiTrigger');
+  const clear = $('insMidiClear');
+  if (!btn) return;
+
+  btn.addEventListener('click', () => {
+    const cue = cues.selected;
+    if (!cue || locked || !settings.midiEnabled) return;
+    if (cueLearning === cue.id) { midi.cancelLearn(); cueLearning = null; syncCueMidi(); return; }
+    cueLearning = cue.id;
+    syncCueMidi();
+    midi.learn((sig) => {
+      // Knop losweken van een globale actie of een andere cue.
+      clearMidiSignature(sig, { keepCueId: cue.id });
+      cue.midiTrigger = sig;
+      cueLearning = null;
+      persist();
+      render();
+      syncCueMidi();
+      if (settings.midiEnabled) renderMidiBinds();
+    });
+  });
+
+  clear.addEventListener('click', () => {
+    const cue = cues.selected;
+    if (!cue || locked) return;
+    cue.midiTrigger = '';
+    persist();
+    render();
+    syncCueMidi();
+  });
+}
+
+// Stond MIDI aan? Dan bij het opstarten meteen weer verbinden.
+async function initMidi() {
+  if (MIDI_SUPPORTED && settings.midiEnabled) {
+    try { await midi.enable(); } catch { settings.midiEnabled = false; }
+  }
+  updateMidiUI();
+}
+
+// Detecteer of we lokaal via server.mjs draaien. Zet een body-class zodat
+// server-afhankelijke opties (netwerk-remote, OSC) automatisch (on)zichtbaar zijn.
+let serverInfo = null;
+let appLink = null;
+let linkConnected = false;
+
+async function initServerDetection() {
+  serverInfo = await detectServer();
+  document.body.classList.toggle('has-server', !!serverInfo);
+  document.body.classList.toggle('no-server', !serverInfo);
+  // Lokaal → shows als bestand in projects/; statisch gehost → IndexedDB.
+  projectStore = createProjectStore(!!serverInfo);
+  renderRecentProjects();
+  // Lokaal? Dan luisteren naar commando's van remotes en onze toestand terugsturen.
+  if (serverInfo) {
+    appLink = connectAppLink({
+      dispatch: control.dispatch,
+      getState: apiState,
+      on: control.on, // pusht de toestand pas ná een render (niet halverwege een async dispatch)
+      onStatus: ({ connected }) => { linkConnected = connected; updateControlTab(); },
+    });
+  }
+  updateControlTab();
+}
+
+// Toon in het Besturing-tabblad of de server-afhankelijke opties beschikbaar zijn.
+function updateControlTab() {
+  const status = $('controlServerStatus');
+  if (!status) return;
+  status.textContent = serverInfo
+    ? `CueGo draait lokaal (server.mjs) — netwerk-remote en OSC zijn beschikbaar.${linkConnected ? ' Verbonden.' : ''}`
+    : 'Statisch gehost — alleen de JavaScript-API en MIDI werken hier. Start CueGo lokaal met "node server.mjs" voor netwerk-remote en OSC.';
+  status.classList.toggle('ok', !!serverInfo);
+
+  // Remote-URL's: op elk LAN-adres waarop de server bereikbaar is.
+  const urls = $('remoteUrls');
+  if (urls && serverInfo) {
+    const port = serverInfo.port || location.port;
+    const hosts = (serverInfo.ips || []).length ? serverInfo.ips : [location.hostname];
+    urls.innerHTML = '';
+    for (const ip of hosts) {
+      const href = `http://${ip}:${port}/remote.html`;
+      const a = document.createElement('a');
+      a.className = 'remote-url';
+      a.href = href;
+      a.target = '_blank';
+      a.rel = 'noopener';
+      a.textContent = href;
+      urls.appendChild(a);
+    }
+    const note = $('remoteTokenNote');
+    if (note) {
+      note.textContent = serverInfo.tokenRequired
+        ? 'Er is een token ingesteld — voeg ?token=… aan de URL toe.'
+        : 'Iedereen op dit netwerk kan de show bedienen. Wil je dat niet? Start met CUEGO_TOKEN=geheim node server.mjs';
+    }
+  }
+
+  // OSC-status: luistert 'ie, en zo niet, waarom niet.
+  const osc = $('oscStatus');
+  if (osc && serverInfo) {
+    const info = serverInfo.osc || {};
+    osc.textContent = info.enabled
+      ? `Luistert op UDP-poort ${info.port}. Stuur OSC vanaf een lichttafel, QLab of ander show-control-systeem:`
+      : serverInfo.tokenRequired
+        ? 'Uit, omdat er een token is ingesteld en OSC geen token kent. Toch aanzetten: CUEGO_OSC=on node server.mjs'
+        : `Uit — poort ${info.port || 53000} was bezet of OSC staat op off. Andere poort: CUEGO_OSC_PORT=53001`;
+    osc.classList.toggle('ok', !!info.enabled);
+  }
+}
+
 // --- Init ------------------------------------------------------------------
 
 function toggleFullscreen() {
@@ -1475,6 +2041,93 @@ document.addEventListener('fullscreenchange', () => {
 function applyInspectorVisibility() {
   document.body.classList.toggle('inspector-collapsed', settings.inspectorHidden);
   $('inspectorToggle').classList.toggle('active', !settings.inspectorHidden);
+  applyInspectorLayout();
+}
+
+// --- Inspector: breedte slepen ----------------------------------------------
+
+const INSPECTOR_MIN = 240;
+const INSPECTOR_MAX = 680;
+
+const clampInspector = (w) => Math.min(INSPECTOR_MAX, Math.max(INSPECTOR_MIN, w || 290));
+
+// Eén plek die de inspector-breedte zet: de variabele (voor de inner) én
+// flex-basis rechtstreeks (die kan geen var() aan zolang hij getransitioneerd wordt).
+function applyInspectorLayout() {
+  const w = clampInspector(settings.inspectorWidth);
+  document.documentElement.style.setProperty('--inspector-w', `${w}px`);
+  const insp = $('inspector');
+  if (insp) insp.style.flexBasis = settings.inspectorHidden ? '0px' : `${w}px`;
+}
+
+function bindInspectorResize() {
+  const handle = $('inspectorResize');
+  if (!handle) return;
+  let startX = 0;
+  let startW = 0;
+  let liveW = 0;
+
+  const onMove = (e) => {
+    // Naar links slepen = breder (de inspector zit rechts).
+    liveW = clampInspector(startW + (startX - e.clientX));
+    document.documentElement.style.setProperty('--inspector-w', `${liveW}px`);
+    $('inspector').style.flexBasis = `${liveW}px`;
+  };
+  const onUp = () => {
+    window.removeEventListener('pointermove', onMove);
+    window.removeEventListener('pointerup', onUp);
+    document.body.classList.remove('resizing-inspector');
+    if (liveW) { settings.inspectorWidth = liveW; saveSettings(); }
+  };
+
+  handle.addEventListener('pointerdown', (e) => {
+    e.preventDefault();
+    startX = e.clientX;
+    startW = $('inspector').getBoundingClientRect().width;
+    liveW = startW;
+    document.body.classList.add('resizing-inspector');
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+  });
+
+  // Dubbelklik op de greep → terug naar de standaardbreedte.
+  handle.addEventListener('dblclick', () => {
+    settings.inspectorWidth = 290;
+    saveSettings();
+    applyInspectorLayout();
+  });
+}
+
+// --- Inspector: inklapbare secties ------------------------------------------
+
+const INS_SECTIONS_KEY = 'webqlab.inspectorSections.v1';
+
+function loadInsSections() {
+  try { return JSON.parse(localStorage.getItem(INS_SECTIONS_KEY)) || {}; } catch { return {}; }
+}
+function saveInsSections(state) {
+  try { localStorage.setItem(INS_SECTIONS_KEY, JSON.stringify(state)); } catch { /* negeer */ }
+}
+
+// Standaard staat alleen 'Algemeen' open; de rest klap je open als je 'm nodig hebt.
+const INS_OPEN_BY_DEFAULT = new Set(['general']);
+
+function bindInspectorSections() {
+  const state = loadInsSections();
+  for (const section of document.querySelectorAll('.ins-section')) {
+    const id = section.dataset.section;
+    // Eerder gekozen? Die keuze wint. Nog nooit aangeraakt → standaard dicht.
+    const collapsed = state[id] ?? !INS_OPEN_BY_DEFAULT.has(id);
+    section.classList.toggle('collapsed', collapsed);
+
+    const head = section.querySelector('.ins-head');
+    head.addEventListener('click', () => {
+      const nowCollapsed = section.classList.toggle('collapsed');
+      const s = loadInsSections();
+      s[id] = nowCollapsed;
+      saveInsSections(s);
+    });
+  }
 }
 
 function bindTopbar() {
@@ -1509,6 +2162,7 @@ async function restoreFromStorage() {
       outPoint: m.outPoint || '',
       autoContinue: !!m.autoContinue,
       autoContinueDelay: m.autoContinueDelay ?? 1,
+      midiTrigger: m.midiTrigger || '',
     });
   }
   if (cues.cues.length) selectOnly(cues.cues[0].id, 0);
@@ -1523,14 +2177,20 @@ bindLoaders();
 bindMenus();
 bindInspector();
 bindSettings();
+bindMidiSettings();
+bindCueMidi();
 bindSwitchBlur();
 bindProjectTitle();
 bindKeyboard();
+bindInspectorResize();
+bindInspectorSections();
 applySingleCueBadge();
-applyInspectorVisibility();
+applyInspectorVisibility(); // roept applyInspectorLayout aan (breedte + in/uitgeklapt)
 locked = hasPassword() && localStorage.getItem(LOCKED_KEY) === '1';
 applyLockState();
 updateProjectTitle();
 render();
 syncInspector();
 restoreFromStorage();
+initServerDetection();
+initMidi();

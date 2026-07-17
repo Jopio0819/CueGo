@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="nl">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="robots" content="noindex" />
+    <title>CueGo — afstandsbediening</title>
+    <link rel="icon" href="assets/logo.png" />
+    <meta name="theme-color" content="#0b0c10" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <style>
+      :root {
+        --bg: #0b0c10;
+        --panel: #14161c;
+        --panel-2: #191c23;
+        --line: #262a33;
+        --line-strong: #333a47;
+        --text: #e8eaf0;
+        --muted: #8b92a3;
+        --faint: #5a6172;
+        --accent: #4c8dff;
+        --play: #35c88f;
+        --danger: #e2564a;
+      }
+      * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+      html, body { margin: 0; padding: 0; height: 100%; }
+      body {
+        background: var(--bg);
+        color: var(--text);
+        font: 16px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+        -webkit-font-smoothing: antialiased;
+        display: flex;
+        flex-direction: column;
+        overscroll-behavior: none;
+        user-select: none;
+      }
+
+      header {
+        display: flex; align-items: center; gap: 10px;
+        padding: max(10px, env(safe-area-inset-top)) 14px 10px;
+        border-bottom: 1px solid var(--line);
+        background: var(--panel);
+      }
+      header img { width: 26px; height: 26px; border-radius: 7px; }
+      header .name { font-weight: 700; font-size: 15px; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--danger); flex: none; }
+      .dot.on { background: var(--play); }
+
+      .list { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; padding: 8px; }
+      .cue {
+        display: flex; align-items: center; gap: 10px;
+        padding: 13px 12px; margin-bottom: 6px;
+        background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+      }
+      .cue.selected { border-color: var(--accent); background: #172033; }
+      .cue.playing { border-color: var(--play); }
+      .cue .num { color: var(--faint); font-variant-numeric: tabular-nums; font-size: 13px; min-width: 26px; }
+      .cue .title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 15px; }
+      .cue .time { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+      .cue.playing .time { color: var(--play); }
+      .empty { color: var(--faint); text-align: center; padding: 40px 20px; font-size: 14px; }
+
+      /* Bediening vergrendeld vanaf de showcomputer */
+      .lockbox { text-align: center; padding: 60px 24px; }
+      .lockbox .lockicon { font-size: 44px; margin-bottom: 14px; opacity: 0.9; }
+      .lockbox p { margin: 0 0 6px; font-size: 17px; font-weight: 700; }
+      .lockbox span { color: var(--faint); font-size: 13px; }
+      body.locked-out .pad button { opacity: 0.35; pointer-events: none; }
+
+      .pad {
+        display: grid; grid-template-columns: 1fr 1fr; gap: 10px;
+        padding: 10px 12px calc(12px + env(safe-area-inset-bottom));
+        border-top: 1px solid var(--line); background: var(--panel);
+      }
+      button {
+        font: inherit; color: var(--text); border: 1px solid var(--line-strong);
+        background: var(--panel-2); border-radius: 12px; padding: 16px 10px;
+        font-weight: 700; cursor: pointer;
+      }
+      button:active { transform: translateY(1px); filter: brightness(1.15); }
+      .go { grid-column: 1 / -1; background: var(--play); color: #04180f; border-color: transparent; font-size: 22px; padding: 22px 10px; }
+      .esc { background: var(--danger); color: #fff; border-color: transparent; }
+      .row2 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; grid-column: 1 / -1; }
+      .row2 button { font-size: 14px; font-weight: 600; padding: 12px 6px; }
+      .note { grid-column: 1 / -1; color: var(--faint); font-size: 11px; text-align: center; margin: 2px 0 0; }
+    </style>
+  </head>
+  <body>
+    <header>
+      <img src="assets/logo.png" alt="" />
+      <span class="name" id="project">CueGo</span>
+      <span class="dot" id="dot" title="Verbinding"></span>
+    </header>
+
+    <div class="list" id="list">
+      <p class="empty">Verbinden…</p>
+    </div>
+
+    <div class="pad">
+      <button class="go" id="go">GO</button>
+      <div class="row2">
+        <button id="prev">▲ Vorige</button>
+        <button id="toggle">Play / Pauze</button>
+        <button id="next">▼ Volgende</button>
+      </div>
+      <button class="esc" id="esc">Fade uit (Esc)</button>
+      <button id="stop">Direct stoppen</button>
+      <p class="note" id="note">Tik op een cue om 'm te starten.</p>
+    </div>
+
+    <script>
+      // Token uit de URL (?token=…) meenemen als de server er om vraagt.
+      const token = new URLSearchParams(location.search).get('token') || '';
+      const q = token ? `&token=${encodeURIComponent(token)}` : '';
+      const qOnly = token ? `?token=${encodeURIComponent(token)}` : '';
+
+      const $ = (id) => document.getElementById(id);
+      const listEl = $('list');
+      const dot = $('dot');
+      let lastRender = '';
+
+      function send(cmd, args) {
+        fetch(`api/command${qOnly}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ cmd, args }),
+        }).then((r) => {
+          if (r.status === 401) $('note').textContent = 'Ongeldig token — check de URL.';
+          else if (r.status === 403) $('note').textContent = 'Afstandsbediening staat uit op de showcomputer.';
+        }).catch(() => { $('note').textContent = 'Geen verbinding met CueGo.'; });
+      }
+
+      function fmt(sec) {
+        sec = Math.max(0, Math.floor(sec || 0));
+        return `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')}`;
+      }
+
+      function render(state) {
+        const offline = !!state.offline;
+        const disabled = state.remoteEnabled === false;
+        $('project').textContent = offline ? 'CueGo' : (state.projectName || 'CueGo');
+        dot.classList.toggle('on', !offline && !disabled);
+        // Bediening op slot: knoppen uit, zodat je niet blind zit te tikken.
+        document.body.classList.toggle('locked-out', disabled);
+        const cues = state.cues || [];
+        // Alleen hertekenen als er echt iets verandert (anders verspringt het scrollen).
+        const sig = JSON.stringify([offline, disabled, cues.map((c) => [c.id, c.number, c.name, c.selected, c.playing, c.paused, Math.floor(c.position)])]);
+        if (sig === lastRender) return;
+        lastRender = sig;
+
+        if (disabled) {
+          listEl.innerHTML = '<div class="lockbox"><div class="lockicon">🔒</div><p>Afstandsbediening uit</p><span>De showcomputer heeft de bediening vergrendeld.</span></div>';
+          $('note').textContent = 'Vergrendeld vanaf de showcomputer.';
+          return;
+        }
+        if (offline) {
+          listEl.innerHTML = '<p class="empty">Wachten op CueGo — open de app op de showcomputer.</p>';
+          return;
+        }
+        if (!cues.length) {
+          listEl.innerHTML = '<p class="empty">Nog geen cues in de show.</p>';
+          return;
+        }
+        listEl.innerHTML = '';
+        for (const c of cues) {
+          const row = document.createElement('div');
+          row.className = 'cue' + (c.selected ? ' selected' : '') + (c.playing ? ' playing' : '');
+          const num = document.createElement('span');
+          num.className = 'num';
+          num.textContent = c.number || c.index;
+          const title = document.createElement('span');
+          title.className = 'title';
+          title.textContent = c.name;
+          const time = document.createElement('span');
+          time.className = 'time';
+          time.textContent = c.playing || c.paused ? `${fmt(c.position)} / ${fmt(c.duration)}` : fmt(c.duration);
+          row.append(num, title, time);
+          row.addEventListener('click', () => send('play', { cue: c.id }));
+          listEl.appendChild(row);
+        }
+      }
+
+      function connect() {
+        const es = new EventSource(`api/events?role=remote${q}`);
+        // De stip toont of CUEGO zelf live is (niet alleen of de server bereikbaar is).
+        es.addEventListener('hello', (e) => {
+          let info = {};
+          try { info = JSON.parse(e.data); } catch { /* negeer */ }
+          dot.classList.toggle('on', !!info.appOnline);
+          $('note').textContent = "Tik op een cue om 'm te starten.";
+        });
+        es.addEventListener('state', (e) => {
+          try { render(JSON.parse(e.data)); } catch { /* negeer */ }
+        });
+        es.onerror = () => {
+          dot.classList.remove('on');
+          $('note').textContent = 'Verbinding kwijt — opnieuw proberen…';
+        };
+      }
+
+      $('go').addEventListener('click', () => send('go'));
+      $('esc').addEventListener('click', () => send('panic'));
+      $('stop').addEventListener('click', () => send('stop'));
+      $('toggle').addEventListener('click', () => send('toggle'));
+      $('prev').addEventListener('click', () => send('select', { dir: 'up' }));
+      $('next').addEventListener('click', () => send('select', { dir: 'down' }));
+
+      connect();
+    </script>
+  </body>
+</html>

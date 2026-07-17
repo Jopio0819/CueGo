@@ -11,15 +11,16 @@ cd webqlab
 node server.mjs
 ```
 
-Then open **http://localhost:4321** (Chrome or Edge recommended). The landing page has an
-**Open CueGo** button that launches the player (`app.html`).
+Then open **http://localhost:4321** (Chrome or Edge recommended). Running locally takes you
+**straight into the player** — the landing page is only for the public static site.
 
 Different port? `PORT=8080 node server.mjs`
 
 ## Pages
 
-- `index.html` — landing page.
-- `app.html` — the actual cue player.
+- `app.html` — the actual cue player. Served at `/` when you run locally.
+- `index.html` — landing page, the homepage on static hosting (GitHub Pages). Reachable locally at `/index.html`.
+- `404.html` — not-found page (used automatically by GitHub Pages and the local server).
 - `src/` — the app modules (see *Structure* below).
 
 ## Loading audio
@@ -74,6 +75,89 @@ A VLC-style transport bar at the bottom controls the selected cue (play/pause, s
 **Single cue mode** (Settings → Playing) plays only one cue at a time — a new cue fades the previous one
 out — and the bar then follows the currently playing cue.
 
+## Remote control & API
+
+Every way of controlling CueGo goes through the same command bus: `go`, `panic`, `stop`, `play`,
+`pause`, `resume`, `toggle`, `select`, `transition`, `playAll`, `state`.
+
+**JavaScript API** — works everywhere, no server needed:
+
+```js
+cuego.go()                      // play + select next
+cuego.panic()                   // fade everything out (Esc)
+cuego.play(3)                   // play cue by number, position, or id
+cuego.select('down')            // 'up' | 'down' | 'first' | 'last' | a cue
+cuego.state()                   // current state snapshot
+cuego.on('cuestart', e => {})   // + cueend, go, panic, statechange, command
+```
+
+**MIDI controller** — works in the browser, no server needed. Enable it under **Settings → Control**,
+then click a binding and press a button on your controller to learn it (a foot pedal on GO is the
+classic setup).
+
+*Workspace control* — bind **GO**, **Panic** (fade out), **Stop**, **Pause**, **Resume**,
+play/pause toggle, **Reset** (stop everything and jump back to the first cue), previous/next cue,
+transition and play-all.
+
+*Cue triggers* — every cue can have **its own MIDI trigger**, set in the inspector: select a cue,
+click the MIDI trigger field and press a pad. That pad then fires that cue directly — the classic
+pad-per-cue setup. Triggers are saved with the show (both auto-save and `.webqlab` files).
+
+Message types: **Note On**, **Control Change** and **Program Change**, each with its channel. Only
+*presses* trigger — note-off, note-on with velocity 0 and CC-release are ignored, so one press is one
+command and never two. A button already in use gets *moved* to its new binding (across workspace
+actions and cue triggers alike), so one button never fires two things.
+
+Bindings are stored per browser. Chrome/Edge only, and needs a secure context (https or localhost);
+elsewhere CueGo hides the switch and says why.
+
+**Network remote** — only when running locally (`node server.mjs`). Open `remote.html` on a phone
+or tablet on the same network; the URL is shown under **Settings → Control**:
+
+```
+http://<your-ip>:4321/remote.html
+```
+
+It has a big GO button, fade out, play/pause, prev/next and a tappable cue list that follows the
+show live. Any program can drive CueGo the same way:
+
+```bash
+curl -X POST http://localhost:4321/api/command \
+  -H 'Content-Type: application/json' -d '{"cmd":"go"}'
+```
+
+By default **anyone on your network can control the show**. To require a token:
+
+```bash
+CUEGO_TOKEN=secret node server.mjs      # then use remote.html?token=secret
+```
+
+**OSC** — only when running locally. CueGo listens on **UDP 53000** so a lighting desk, QLab or any
+show-control system can drive it. QLab-style addresses work directly; the `/cuego` prefix is optional
+and bundles are supported.
+
+| Address | Does |
+|---|---|
+| `/cue/3/start` | start the cue with number/position 3 (`/cue/3` also works) |
+| `/cue/3/select` | select it without playing |
+| `/go` | GO (`/go 3` starts cue 3) |
+| `/panic` | fade everything out |
+| `/stop` · `/reset` | stop immediately · stop and jump back to the first cue |
+| `/pause` · `/resume` · `/toggle` | transport |
+| `/select/next` · `/select/prev` · `/select/first` · `/select/last` | move the selection |
+| `/transition` · `/playAll` | transition · play everything at once |
+
+```bash
+CUEGO_OSC_PORT=53001 node server.mjs    # different port (e.g. QLab already has 53000)
+CUEGO_OSC=off node server.mjs           # disable OSC
+```
+
+OSC has no authentication, so setting `CUEGO_TOKEN` turns OSC **off** — override with `CUEGO_OSC=on`.
+If the port is already taken CueGo says so and keeps running without OSC.
+
+Server-dependent features are detected at startup (`/api/ping`) and are **hidden automatically**
+when CueGo is hosted statically — on GitHub Pages you only get the JavaScript API.
+
 ## Projects
 
 Under **Settings → Project**:
@@ -109,7 +193,11 @@ and the strongest password hashing. Over HTTP on a plain IP those degrade gracef
 
 ## Structure
 
-- `server.mjs` — small static server (Node stdlib), for local development only.
+- `server.mjs` — static server + control relay (SSE, HTTP, OSC). Node stdlib only, no dependencies.
+- `osc.mjs` — OSC packet parser and address → command mapping (server side).
+- `src/control.js` — the command bus every input goes through, plus `window.cuego` and server detection.
+- `src/net-remote.js` — links the app to the relay: receives commands, pushes state back.
+- `src/midi.js` — Web MIDI: message parsing and device handling.
 - `src/audio-engine.js` — Web Audio: decode, play, pause/seek, fades, per-cue in/out, loop, crossfade.
 - `src/cue-model.js` — cue data model, cue list, sorting, reordering.
 - `src/storage.js` — auto-save (IndexedDB + localStorage).

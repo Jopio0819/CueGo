@@ -70,6 +70,7 @@ export function saveMeta(cues) {
     outPoint: c.outPoint || '',
     autoContinue: !!c.autoContinue,
     autoContinueDelay: c.autoContinueDelay ?? 1,
+    midiTrigger: c.midiTrigger || '',
   }));
   try {
     localStorage.setItem(META_KEY, JSON.stringify(meta));
