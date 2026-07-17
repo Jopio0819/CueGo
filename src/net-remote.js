@@ -62,6 +62,7 @@ export function connectAppLink({ dispatch, getState, on, onStatus, onShow, onDev
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ deviceId: deviceId(), locked: !!isLocked?.() }),
+      signal: AbortSignal.timeout?.(4000), // hangende ping niet laten opstapelen
     })
       .then((r) => r.json())
       .then((info) => {
@@ -84,12 +85,16 @@ export function connectAppLink({ dispatch, getState, on, onStatus, onShow, onDev
     const body = JSON.stringify(snapshot);
     if (!force && body === lastSent) return; // niets veranderd → geen verkeer
     lastSent = body;
+    // Eigen timeout: een push die blijft hangen (haperende verbinding, verstopte
+    // wachtrij) moet zichzelf afbreken, anders stapelen de volgende zich erachter
+    // op en lijkt álles 'pending'. Bewust geen keepalive: die pool is klein en
+    // gedeeld, en een gemiste laatste push is onschuldig.
     fetch('api/state', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ appId, state: snapshot }),
-      keepalive: true,
-    }).catch(() => { /* server weg → onError regelt de status */ });
+      signal: AbortSignal.timeout?.(4000),
+    }).catch(() => { lastSent = ''; /* mislukt → volgende poging pusht opnieuw */ });
   }
 
   function start() {

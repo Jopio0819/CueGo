@@ -937,6 +937,13 @@ if (!(await maybeUpdate())) {
   await loadPreferredShow(); // gekozen showcomputer overleeft een herstart
   await initAdminPassword();
 
+  // Een verzoek waarvan de body nooit afkomt (bevroren tab die halverwege een
+  // POST stilvalt) bleef anders tot 5 minuten hangen — en alle vólgende verzoeken
+  // over dezelfde verbinding wachtten erachter in de rij: het beruchte 'pending'.
+  // Na 15s kappen we zo'n verzoek af; de browser begint dan gewoon opnieuw.
+  server.requestTimeout = 15000;
+  server.headersTimeout = 16000;
+
   server.listen(PORT, () => {
     console.log(`CueGo draait op http://localhost:${PORT}`);
     const ips = lanIps();
