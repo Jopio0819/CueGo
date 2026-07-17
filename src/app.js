@@ -661,16 +661,19 @@ function animateProgress() {
 }
 
 // Welke cue bestuurt de afspeelbalk?
-// - Single cue-modus: de cue die nu klinkt/gepauzeerd is (anders de selectie).
-// - Normaal: de geselecteerde cue.
+// De cue die nu klinkt (of gepauzeerd is), anders de selectie. Na een GO
+// schuift de selectie door naar de vólgende cue; volgde de balk de selectie,
+// dan bleef het play/pauze-icoon op 'play' staan terwijl er iets speelt — en
+// pauzeerde de knop niet wat je hoort. Meekijkers volgen ook wat er klinkt.
 function transportCue() {
-  if (settings.singleCueMode) {
-    for (const id of engine.voices.keys()) {
-      const c = cues.getById(id);
-      if (c) return c;
-    }
+  let gepauzeerd = null;
+  for (const id of engine.voices.keys()) {
+    const c = cues.getById(id);
+    if (!c) continue;
+    if (engine.isPlaying(id)) return c;
+    if (!gepauzeerd && engine.isPaused(id)) gepauzeerd = c;
   }
-  return cues.selected;
+  return gepauzeerd || cues.selected;
 }
 
 let seeking = false;
