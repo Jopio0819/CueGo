@@ -18,7 +18,7 @@ import { createServer } from 'node:http';
 import { readFile, writeFile, readdir, stat, mkdir, unlink } from 'node:fs/promises';
 import { extname, join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { networkInterfaces } from 'node:os';
+import { networkInterfaces, homedir } from 'node:os';
 import { createSocket } from 'node:dgram';
 import { createInterface } from 'node:readline';
 import { execFile, spawn } from 'node:child_process';
@@ -162,6 +162,51 @@ async function maybeUpdate() {
   const child = spawn(process.execPath, [fileURLToPath(import.meta.url)], { stdio: 'inherit', cwd: ROOT });
   child.on('exit', (code) => process.exit(code ?? 0));
   return true;
+}
+
+// --- Het cuego-commando -----------------------------------------------------
+// Elke start zorgt dat `cuego` bestaat — ook voor wie ooit alleen kloonde, en
+// op Windows, waar setup.mjs eerst niets kon. Idempotent, en een misser is
+// stil: een ontbrekend commando mag een start nooit breken.
+// Uitzetten kan met CUEGO_NO_ALIAS=1.
+
+async function ensureCuegoCommand() {
+  if (process.env.CUEGO_NO_ALIAS) return;
+  const server = join(ROOT, 'server.mjs');
+  try {
+    if (process.platform === 'win32') {
+      // WindowsApps staat standaard in het gebruikers-PATH en is schrijfbaar
+      // zonder adminrechten. Een .cmd werkt in cmd én PowerShell — anders dan
+      // een PowerShell-profiel, dat de standaard execution policy blokkeert.
+      const dir = join(process.env.LOCALAPPDATA || join(homedir(), 'AppData', 'Local'), 'Microsoft', 'WindowsApps');
+      const target = join(dir, 'cuego.cmd');
+      const inhoud = `@echo off\r\nnode "${server}" %*\r\n`;
+      if ((await readFile(target, 'utf8').catch(() => null)) === inhoud) return; // al goed
+      await mkdir(dir, { recursive: true });
+      await writeFile(target, inhoud);
+      console.log('Commando "cuego" geïnstalleerd — start CueGo voortaan met: cuego');
+      return;
+    }
+
+    // macOS/Linux: alias in het profiel van de eigen shell.
+    const shell = process.env.SHELL || '';
+    const profile = shell.includes('zsh') ? join(homedir(), '.zshrc')
+      : shell.includes('bash') ? join(homedir(), '.bashrc')
+      : null;
+    if (!profile) return; // onbekende shell → niet gokken
+    const aliasLine = `alias cuego='node "${server}"'`;
+    const huidig = await readFile(profile, 'utf8').catch(() => '');
+    if (huidig.includes(aliasLine)) return; // staat er al, met het juiste pad
+    let nieuw;
+    if (/^alias cuego=.*$/m.test(huidig)) {
+      // Alias bestaat maar wijst ergens anders heen (repo verplaatst) → bijwerken.
+      nieuw = huidig.replace(/^alias cuego=.*$/m, aliasLine);
+    } else {
+      nieuw = `${huidig}\n# CueGo vanaf elke plek starten\n${aliasLine}\n`;
+    }
+    await writeFile(profile, nieuw);
+    console.log(`Commando "cuego" geïnstalleerd (${profile}) — nieuwe terminal, dan: cuego`);
+  } catch { /* stil */ }
 }
 
 // --- Admin-wachtwoord -------------------------------------------------------
@@ -812,6 +857,7 @@ function openBrowser(url) {
 // code), dan het wachtwoord vragen, dán pas luisteren — anders kan een apparaat
 // al verbinden voordat we weten of er een slot op zit.
 if (!(await maybeUpdate())) {
+  await ensureCuegoCommand();
   await initAdminPassword();
 
   server.listen(PORT, () => {

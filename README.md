@@ -12,8 +12,10 @@ First time (also installs the `cuego` command and starts the server):
 git clone https://github.com/Jopio0819/cuego.git && cd cuego && node setup.mjs
 ```
 
-After that, just type `cuego` from any directory (new terminal, macOS/Linux; on Windows use
-`node server.mjs` in the repo). Then open **http://localhost:4321** (Chrome or Edge recommended).
+After that, just type `cuego` from any directory (new terminal). The server installs that command
+on every start — an alias in your shell profile on macOS/Linux, a `cuego.cmd` in WindowsApps on
+Windows — so existing clones get it too. Then open **http://localhost:4321** (Chrome or Edge
+recommended).
 Running locally takes you **straight into the player** — the landing page is only for the public
 static site.
 
