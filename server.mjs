@@ -314,7 +314,6 @@ let primaryDeviceId = null;
 // een apparaat dat speelt zonder de rol te hebben, wordt door niemand gevolgd.
 const PREF_FILE = join(SHOW_DIR, 'server-state.json');
 let preferredShowDeviceId = null;
-let userChoseThisBoot = false;
 
 async function loadPreferredShow() {
   try { preferredShowDeviceId = JSON.parse(await readFile(PREF_FILE, 'utf8')).showDeviceId || null; }
@@ -335,8 +334,8 @@ function savePreferredShow() {
 // ander venster klikt. Een tab die je gewoon sluit merken we meteen via het
 // verbreken van de SSE-verbinding; deze grens is puur de vangnet voor bevroren
 // pagina's, die helemaal geen timers meer draaien.
-const HEARTBEAT_TIMEOUT_MS = 90000;
-const REAP_INTERVAL_MS = 5000;
+const HEARTBEAT_TIMEOUT_MS = process.env.CUEGO_HEARTBEAT_TIMEOUT_MS ? Number(process.env.CUEGO_HEARTBEAT_TIMEOUT_MS) : 90000;
+const REAP_INTERVAL_MS = process.env.CUEGO_REAP_INTERVAL_MS ? Number(process.env.CUEGO_REAP_INTERVAL_MS) : 5000;
 
 function appClients() {
   return [...clients].filter((c) => c.role === 'app');
@@ -359,6 +358,42 @@ function uniqueLabel(label, deviceId) {
   return label;
 }
 
+// Wie is de showcomputer? Eén bron van waarheid, telkens opnieuw bepaald zodra de
+// set levende clients verandert (verbinden, wegvallen, opruimen, ontwaken):
+//   1. het gekózen apparaat, als dat leeft — het wint altijd, en pakt de rol dus
+//      vanzelf terug zodra het weer online is;
+//   2. anders de huidige showcomputer, als die nog leeft — geen onnodig geschuif;
+//   3. anders de langst-verbonden levende client — zodat de show blijft werken;
+//   4. niemand, als er geen levende client is.
+// Zo blijft de rol nooit op een dood/opgeruimd apparaat plakken (dan landt GO in
+// het niets en ziet iedereen 'offline'), en springt hij ook niet naar een
+// willekeurig tabblad terwijl het gekozen apparaat nog gewoon draait.
+// Geeft true als de rol daadwerkelijk wisselde.
+function resolvePrimary() {
+  const live = liveApps();
+  const isLive = (id) => !!id && live.some((c) => c.deviceId === id);
+  const before = primaryDeviceId;
+
+  let next;
+  if (isLive(preferredShowDeviceId)) next = preferredShowDeviceId;
+  else if (isLive(primaryDeviceId)) next = primaryDeviceId;
+  else next = live.slice().sort((a, b) => a.appId - b.appId)[0]?.deviceId || null;
+
+  if (next === before) return false;
+  primaryDeviceId = next;
+  lastState = null; // toestand van de vórige showcomputer is niet meer geldig
+  if (next) {
+    const label = live.find((c) => c.deviceId === next)?.label || next.slice(0, 8);
+    const waarom = next === preferredShowDeviceId ? 'gekozen apparaat'
+      : (before ? 'vorige showcomputer offline' : 'eerste levende client');
+    console.log(`Showcomputer is nu: ${label} (${waarom})`);
+  } else {
+    console.log('Geen levende client meer — geen showcomputer.');
+    broadcast('remote', 'state', { offline: true, projectName: '', cues: [] });
+  }
+  return true;
+}
+
 // Alleen een echte ping telt als levensteken. Een client die nog nooit pingde is
 // 'niet levend': hij telt niet mee in de lijst en krijgt de showcomputer-rol niet.
 function touchDevice(deviceId) {
@@ -370,57 +405,26 @@ function touchDevice(deviceId) {
     if (!c.alive) { c.alive = true; wokeUp = true; }
     seen = true;
   }
-  if (wokeUp) {
-    const label = () => appClients().find((c) => c.deviceId === deviceId)?.label || deviceId.slice(0, 8);
-    if (!primaryApp() && (!preferredShowDeviceId || preferredShowDeviceId === deviceId)) {
-      // Eerste levensteken en geen (ander) gekozen apparaat → dit wordt de
-      // showcomputer. Bestaat er wél een voorkeur, dan blijft de rol daarvoor
-      // gereserveerd en pakt geen willekeurige tab 'm af.
-      primaryDeviceId = deviceId;
-      console.log(`Showcomputer is nu: ${label()}${preferredShowDeviceId === deviceId ? ' (gekozen apparaat)' : ' (eerste levende client)'}`);
-    } else if (!userChoseThisBoot && preferredShowDeviceId === deviceId && primaryDeviceId !== deviceId) {
-      // Het apparaat dat de gebruiker ooit als showcomputer koos komt terug, en
-      // de huidige rol is maar een automatische noodgreep → voorkeur wint.
-      primaryDeviceId = deviceId;
-      lastState = null;
-      console.log(`Showcomputer hersteld naar voorkeursapparaat: ${label()}`);
-    }
-    broadcastDevices();
-  }
+  // Een nieuw levend apparaat verandert de lijst (en misschien de showcomputer).
+  if (wokeUp) { resolvePrimary(); broadcastDevices(); }
   return seen;
 }
 
-// Gooi clients eruit die te lang niets van zich lieten horen.
+// Gooi clients eruit die te lang niets van zich lieten horen (bevroren/bfcached
+// tabs die de verbinding openhouden maar geen timers meer draaien).
 function reapDeadClients() {
   const now = Date.now();
   let changed = false;
-  let lostPrimary = false;
   for (const c of appClients()) {
     if (now - (c.lastSeen || 0) <= HEARTBEAT_TIMEOUT_MS) continue;
-    if (c.deviceId === primaryDeviceId) lostPrimary = true;
     try { c.res.end(); } catch { /* al dicht */ }
     clients.delete(c);
     changed = true;
   }
   if (!changed) return;
-  if (lostPrimary) {
-    lastState = null;
-    if (preferredShowDeviceId) {
-      // Er is een gekózen showcomputer: de rol is gereserveerd. Niet doorgeven
-      // aan een willekeurige tab — dan komt het geluid ineens ergens anders
-      // vandaan en sturen alle GO's naar een zombie. Meekijkers zien 'offline'
-      // tot het gekozen apparaat terug is (dan pakt het de rol vanzelf weer).
-      primaryDeviceId = preferredShowDeviceId;
-      console.log('Showcomputer offline — rol blijft gereserveerd tot het gekozen apparaat terugkomt.');
-      broadcast('remote', 'state', { offline: true, projectName: '', cues: [] });
-    } else {
-      // Geen voorkeur bekend → rol naar de langst verbonden, levende client.
-      const next = liveApps().sort((a, b) => a.appId - b.appId)[0];
-      primaryDeviceId = next ? next.deviceId : null;
-      if (next) console.log(`Showcomputer weggevallen; rol naar: ${next.label || next.deviceId.slice(0, 8)}`);
-      else broadcast('remote', 'state', { offline: true, projectName: '', cues: [] });
-    }
-  }
+  // Was de showcomputer erbij, dan wijst resolvePrimary de rol toe aan een levend
+  // apparaat; blijft die gewoon leven, dan verandert er niets aan de rol.
+  resolvePrimary();
   broadcastDevices();
 }
 
@@ -451,14 +455,11 @@ function broadcastDevices() {
 
 function setShowComputer(deviceId) {
   if (!liveApps().some((c) => c.deviceId === deviceId)) return false; // nooit aan een dode client
-  primaryDeviceId = deviceId;
-  lastState = null; // toestand van de vórige showcomputer is niet meer geldig
-  // Expliciete keuze van de gebruiker: onthouden, ook voorbij een herstart.
-  userChoseThisBoot = true;
+  // Expliciete keuze van de gebruiker: onthouden, ook voorbij een herstart. Het
+  // gekozen apparaat leeft, dus resolvePrimary maakt het meteen de showcomputer.
   preferredShowDeviceId = deviceId;
   savePreferredShow();
-  const label = appClients().find((c) => c.deviceId === deviceId)?.label || deviceId.slice(0, 8);
-  console.log(`Showcomputer is nu: ${label}`);
+  resolvePrimary();
   broadcastDevices();
   return true;
 }
@@ -601,31 +602,12 @@ function openSse(req, res, role, deviceId, label) {
     if (role !== 'app') return;
     // Verving een nieuwere verbinding van hetzelfde apparaat ons al? Dan niets doen.
     if (appClients().some((c) => c.deviceId === client.deviceId)) return;
-    if (client.deviceId !== primaryDeviceId) { broadcastDevices(); return; } // gewone client weg
-
-    // De showcomputer is weg. Is er een gekózen apparaat, dan blijft de rol
-    // daarvoor gereserveerd (zie reapDeadClients); alleen zonder voorkeur mag
-    // de rol naar de oudste overgebleven client.
-    if (preferredShowDeviceId) {
-      lastState = null;
-      primaryDeviceId = preferredShowDeviceId;
-      console.log('Showcomputer offline — rol blijft gereserveerd tot het gekozen apparaat terugkomt.');
-      broadcast('remote', 'state', { offline: true, projectName: '', cues: [] });
-      broadcastDevices();
-      return;
-    }
-    const next = liveApps().sort((a, b) => a.appId - b.appId)[0];
-    if (next) {
-      primaryDeviceId = next.deviceId;
-      lastState = null;
-      console.log(`Showcomputer weggevallen; rol naar: ${next.label || next.deviceId.slice(0, 8)}`);
-      broadcastDevices();
-      return;
-    }
-    // Geen app meer: bewaarde toestand is niet langer 'live'.
-    primaryDeviceId = null;
-    lastState = null;
-    broadcast('remote', 'state', { offline: true, projectName: '', cues: [] });
+    // Sluit de gebruiker het tabblad, dan valt deze verbinding meteen weg. Was het
+    // de showcomputer, dan schuift resolvePrimary de rol direct naar een levend
+    // apparaat — geen wachten op de opruim-timer, geen rol die op een dood
+    // apparaat blijft plakken.
+    resolvePrimary();
+    broadcastDevices();
   };
   req.on('close', cleanup);
   req.on('error', cleanup);
