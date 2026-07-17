@@ -1206,14 +1206,17 @@ function syncSettingsForm() {
 function updateLockSettingsUI() {
   const has = hasPassword();
 
-  // Beheert de server het wachtwoord, dan heeft een eigen wachtwoord per apparaat
-  // geen zin: verberg die knop, anders staan er twee wachtwoorden naast elkaar.
-  $('passwordBtn').hidden = adminLock;
+  // Zelf-gehost beheert de sérver het wachtwoord (gevraagd bij het starten) —
+  // een eigen wachtwoord per apparaat bestaat daar niet, dus ook geen knop.
+  // Alleen statisch gehost (GitHub Pages) stel je 'm per apparaat in.
+  $('passwordBtn').hidden = sharedShow;
   $('lockStatusNote').textContent = adminLock
     ? 'De server beheert het admin-wachtwoord (gevraagd bij het starten). Elk apparaat start vergrendeld tot het daar is ingevuld.'
-    : has
-      ? 'Er is een wachtwoord ingesteld. Gebruik het slot in de balk om te (ont)grendelen.'
-      : 'Stel een wachtwoord in om bewerkingen te kunnen vergrendelen.';
+    : sharedShow
+      ? 'Er is geen admin-wachtwoord. Wil je vergrendeling gebruiken? Herstart de server en vul er bij het starten één in.'
+      : has
+        ? 'Er is een wachtwoord ingesteld. Gebruik het slot in de balk om te (ont)grendelen.'
+        : 'Stel een wachtwoord in om bewerkingen te kunnen vergrendelen.';
   $('passwordBtn').textContent = has ? 'Wachtwoord verwijderen…' : 'Wachtwoord instellen…';
 
   // Vergrendeld? Dan hier ontgrendelen. Zonder wachtwoord (bv. vergrendeld vanaf

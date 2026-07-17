@@ -798,6 +798,16 @@ function startOsc() {
   });
 }
 
+// Open de app in de standaardbrowser. Alleen bij een interactieve start (TTY):
+// een achtergrondproces of script dat browservensters laat opploppen is een
+// plaag. Uitzetten kan met CUEGO_NO_OPEN=1.
+function openBrowser(url) {
+  if (process.env.CUEGO_NO_OPEN || !process.stdin.isTTY) return;
+  const cmd = process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'cmd' : 'xdg-open';
+  const args = process.platform === 'win32' ? ['/c', 'start', '""', url] : [url];
+  try { spawn(cmd, args, { stdio: 'ignore', detached: true }).unref(); } catch { /* stil — de URL staat in de log */ }
+}
+
 // Volgorde bij het starten: eerst de update-check (herstart eventueel met nieuwe
 // code), dan het wachtwoord vragen, dán pas luisteren — anders kan een apparaat
 // al verbinden voordat we weten of er een slot op zit.
@@ -814,5 +824,6 @@ if (!(await maybeUpdate())) {
     else if (ips.length) console.log('Let op: zonder admin-wachtwoord kan iedereen op dit netwerk de show bedienen.');
     if (adminPassword && !oscEnabled()) console.log('OSC uit: OSC kent geen wachtwoord. Toch aanzetten? CUEGO_OSC=on');
     startOsc();
+    openBrowser(`http://localhost:${PORT}`);
   });
 }
