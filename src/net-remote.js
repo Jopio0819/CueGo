@@ -6,6 +6,27 @@
 
 const STATE_POLL_MS = 400; // achtergrond-check (vooral voor de looppositie)
 const PUSH_DEBOUNCE_MS = 50; // samenvoegen van een reeks wijzigingen
+const HEARTBEAT_MS = 8000; // ruim binnen de 25s die de server aanhoudt
+
+// Standaardnaam op basis van browser + systeem. "Client 3" zegt niets als je
+// drie apparaten in de zaal hebt staan; "Safari op iPad" wel.
+export function defaultDeviceLabel() {
+  const ua = navigator.userAgent;
+  const browser = /Edg\//.test(ua) ? 'Edge'
+    : /OPR\//.test(ua) ? 'Opera'
+    : /Firefox\//.test(ua) ? 'Firefox'
+    : /Chrome\//.test(ua) ? 'Chrome'
+    : /Safari\//.test(ua) ? 'Safari'
+    : 'Browser';
+  const os = /iPhone/.test(ua) ? 'iPhone'
+    : /iPad/.test(ua) ? 'iPad'
+    : /Android/.test(ua) ? 'Android'
+    : /Macintosh|Mac OS X/.test(ua) ? 'Mac'
+    : /Windows/.test(ua) ? 'Windows'
+    : /Linux/.test(ua) ? 'Linux'
+    : '';
+  return os ? `${browser} op ${os}` : browser;
+}
 
 // Stabiel id per venster/tab. Bewust sessionStorage en niet localStorage:
 // - overleeft een refresh → we krijgen onze showcomputer-rol terug in plaats van
@@ -23,14 +44,26 @@ export function deviceId() {
   return id;
 }
 
-export function connectAppLink({ dispatch, getState, on, onStatus, onShow, onDevices, onState, label }) {
+export function connectAppLink({ dispatch, getState, on, onStatus, onShow, onDevices, onState, onLock, isLocked, label }) {
   let es = null;
   let timer = null;
   let pushTimer = null;
+  let beatTimer = null;
   let lastSent = '';
   let stopped = false;
   let appId = null;
-  let isPrimary = false; // meerdere tabs open? Alleen de nieuwste bestuurt de show.
+  let isPrimary = false; // is dit apparaat de showcomputer (die het geluid maakt)?
+
+  // Levensteken: hiermee weet de server dat we echt nog draaien. Wordt deze tab
+  // bevroren (bfcache/achtergrond), dan staan de timers stil, blijft de ping uit
+  // en ruimt de server ons op — precies de bedoeling.
+  function beat() {
+    fetch('api/heartbeat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ deviceId: deviceId(), locked: !!isLocked?.() }),
+    }).catch(() => {});
+  }
 
   function pushState(force = false) {
     if (!isPrimary || appId == null) return; // passieve tab pusht niets
@@ -71,6 +104,13 @@ export function connectAppLink({ dispatch, getState, on, onStatus, onShow, onDev
       onDevices?.(data);
       onStatus?.({ connected: true, primary: isPrimary });
       if (isPrimary && !was) pushState(true); // net showcomputer geworden → bron van waarheid
+    });
+
+    // Vanaf een ander apparaat (ont)grendeld via het Multi-device-paneel.
+    es.addEventListener('lock', (e) => {
+      let data;
+      try { data = JSON.parse(e.data); } catch { return; }
+      onLock?.(!!data.locked);
     });
 
     // Afspeeltoestand van de showcomputer. Krijgen we alleen als wij het níét zijn:
@@ -119,6 +159,9 @@ export function connectAppLink({ dispatch, getState, on, onStatus, onShow, onDev
     // (dus ook tijdens het spelen, want de positie loopt dan op).
     clearInterval(timer);
     timer = setInterval(() => pushState(false), STATE_POLL_MS);
+    clearInterval(beatTimer);
+    beat(); // meteen één, niet pas na 8s
+    beatTimer = setInterval(beat, HEARTBEAT_MS);
   }
 
   // De app rendert → toestand is nu écht bij. Even samenvoegen zodat een reeks
@@ -132,6 +175,7 @@ export function connectAppLink({ dispatch, getState, on, onStatus, onShow, onDev
   function stop() {
     stopped = true;
     clearInterval(timer);
+    clearInterval(beatTimer);
     clearTimeout(pushTimer);
     pushTimer = null;
     es?.close();

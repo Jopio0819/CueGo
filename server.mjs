@@ -142,21 +142,90 @@ let lastState = null; // laatst bekende toestand van de showcomputer
 let appSeq = 0;
 let primaryDeviceId = null;
 
+// Een open TCP-verbinding bewijst niet dat er iemand thuis is: een bevroren of
+// bfcached tab houdt 'm open terwijl er niets meer draait. Zonder deze check kan
+// zo'n dode client de showcomputer-rol vasthouden en landt GO in het niets.
+// Clients pingen daarom actief; bevroren tabs hebben bevroren timers en vallen af.
+const HEARTBEAT_TIMEOUT_MS = 25000;
+const REAP_INTERVAL_MS = 5000;
+
 function appClients() {
   return [...clients].filter((c) => c.role === 'app');
 }
+// Clients die aantoonbaar draaien: hebben minstens één keer gepingd. Verbonden
+// zijn is geen bewijs — de browser herverbindt ook vanuit een bevroren pagina.
+function liveApps() {
+  return appClients().filter((c) => c.alive);
+}
+
+// Twee identieke laptops geven dezelfde standaardnaam ("Chrome op Mac"). Nummer
+// die dan door, anders kun je ze in de lijst niet uit elkaar houden.
+function uniqueLabel(label, deviceId) {
+  const taken = appClients().filter((c) => c.deviceId !== deviceId).map((c) => c.label);
+  if (!taken.includes(label)) return label;
+  for (let n = 2; n < 50; n++) {
+    const candidate = `${label} (${n})`;
+    if (!taken.includes(candidate)) return candidate;
+  }
+  return label;
+}
+
+// Alleen een echte ping telt als levensteken. Een client die nog nooit pingde is
+// 'niet levend': hij telt niet mee in de lijst en krijgt de showcomputer-rol niet.
+function touchDevice(deviceId) {
+  let seen = false;
+  let wokeUp = false;
+  for (const c of appClients()) {
+    if (c.deviceId !== deviceId) continue;
+    c.lastSeen = Date.now();
+    if (!c.alive) { c.alive = true; wokeUp = true; }
+    seen = true;
+  }
+  if (wokeUp) {
+    // Eerste levensteken. Is er nog geen showcomputer, dan wordt dit 'm.
+    if (!primaryApp()) primaryDeviceId = deviceId;
+    broadcastDevices();
+  }
+  return seen;
+}
+
+// Gooi clients eruit die te lang niets van zich lieten horen.
+function reapDeadClients() {
+  const now = Date.now();
+  let changed = false;
+  let lostPrimary = false;
+  for (const c of appClients()) {
+    if (now - (c.lastSeen || 0) <= HEARTBEAT_TIMEOUT_MS) continue;
+    if (c.deviceId === primaryDeviceId) lostPrimary = true;
+    try { c.res.end(); } catch { /* al dicht */ }
+    clients.delete(c);
+    changed = true;
+  }
+  if (!changed) return;
+  if (lostPrimary) {
+    // Rol naar de langst verbonden, aantoonbaar levende client.
+    const next = liveApps().sort((a, b) => a.appId - b.appId)[0];
+    primaryDeviceId = next ? next.deviceId : null;
+    lastState = null;
+    if (!next) broadcast('remote', 'state', { offline: true, projectName: '', cues: [] });
+  }
+  broadcastDevices();
+}
+
+setInterval(reapDeadClients, REAP_INTERVAL_MS).unref?.();
 function primaryApp() {
-  return appClients().find((c) => c.deviceId === primaryDeviceId) || null;
+  return liveApps().find((c) => c.deviceId === primaryDeviceId) || null;
 }
 
 // Wie zijn er verbonden, en wie speelt het geluid af?
 function deviceList() {
-  return appClients()
+  return liveApps()
     .sort((a, b) => a.appId - b.appId)
     .map((c) => ({
       deviceId: c.deviceId,
-      label: c.label || `Client ${c.appId}`,
+      label: c.label || 'Onbekend apparaat',
       isShow: c.deviceId === primaryDeviceId,
+      locked: !!c.locked,
     }));
 }
 
@@ -169,7 +238,7 @@ function broadcastDevices() {
 }
 
 function setShowComputer(deviceId) {
-  if (!appClients().some((c) => c.deviceId === deviceId)) return false;
+  if (!liveApps().some((c) => c.deviceId === deviceId)) return false; // nooit aan een dode client
   primaryDeviceId = deviceId;
   lastState = null; // toestand van de vórige showcomputer is niet meer geldig
   broadcastDevices();
@@ -251,7 +320,8 @@ function openSse(req, res, role, deviceId, label) {
   if (role === 'app') {
     client.appId = ++appSeq;
     client.deviceId = deviceId;
-    if (label) client.label = String(label).slice(0, 60);
+    client.lastSeen = Date.now();
+    if (label) client.label = uniqueLabel(String(label).slice(0, 60), deviceId);
 
     // Zelfde apparaat, nieuwe verbinding = een refresh. De oude verbinding is dood
     // maar hangt nog even; die gooien we er meteen uit.
@@ -265,9 +335,9 @@ function openSse(req, res, role, deviceId, label) {
   clients.add(client);
 
   if (role === 'app') {
-    // Eerste apparaat wordt de showcomputer. Komt er later een bij, dan verandert
-    // er niets — anders zou een tweede laptop stilletjes het geluid overnemen.
-    if (!primaryApp()) primaryDeviceId = client.deviceId;
+    // Nog géén showcomputer-rol: die krijg je pas bij je eerste levensteken
+    // (zie touchDevice). Verbonden zijn zegt niets — een bevroren tab herverbindt
+    // ook, en die mag de rol niet kapen.
     sseSend(client, 'hello', {
       role, token: !!TOKEN, appId: client.appId, deviceId: client.deviceId,
       primary: client.deviceId === primaryDeviceId,
@@ -298,7 +368,7 @@ function openSse(req, res, role, deviceId, label) {
 
     // De showcomputer is weg: draag over aan de oudste overgebleven client, zodat
     // de remote niet dood staat. Je kunt 'm daarna handmatig omzetten.
-    const next = appClients().sort((a, b) => a.appId - b.appId)[0];
+    const next = liveApps().sort((a, b) => a.appId - b.appId)[0];
     if (next) {
       primaryDeviceId = next.deviceId;
       lastState = null;
@@ -331,6 +401,19 @@ const server = createServer(async (req, res) => {
       return;
     }
 
+    // Levensteken van een client. Blijft dit uit, dan ruimen we 'm op.
+    if (urlPath === '/api/heartbeat') {
+      if (req.method !== 'POST') { json(res, 405, { error: 'Gebruik POST' }); return; }
+      const body = await readJson(req).catch(() => null);
+      if (!body?.deviceId) { json(res, 400, { error: 'deviceId ontbreekt' }); return; }
+      const known = touchDevice(body.deviceId);
+      if (body.locked != null) {
+        for (const c of appClients()) if (c.deviceId === body.deviceId) c.locked = !!body.locked;
+      }
+      json(res, 200, { ok: true, known });
+      return;
+    }
+
     // Multi-device: wie is de showcomputer, en hoe heten de apparaten?
     if (urlPath === '/api/devices') {
       if (req.method === 'GET') { json(res, 200, { showDeviceId: primaryDeviceId, devices: deviceList() }); return; }
@@ -341,7 +424,18 @@ const server = createServer(async (req, res) => {
 
       // Apparaatnaam zetten (zodat je ze in de lijst uit elkaar houdt).
       if (body.label != null && body.deviceId != null) {
-        for (const c of appClients()) if (c.deviceId === body.deviceId) c.label = String(body.label).slice(0, 60);
+        const l = uniqueLabel(String(body.label).slice(0, 60), body.deviceId);
+        for (const c of appClients()) if (c.deviceId === body.deviceId) c.label = l;
+      }
+
+      // Een ander apparaat op afstand (ont)grendelen vanuit het Multi-device-paneel.
+      if (body.lockDeviceId != null && body.locked != null) {
+        const targets = appClients().filter((c) => c.deviceId === body.lockDeviceId);
+        if (!targets.length) { json(res, 404, { error: 'Dat apparaat is niet (meer) verbonden' }); return; }
+        for (const c of targets) {
+          c.locked = !!body.locked;
+          sseSend(c, 'lock', { locked: !!body.locked });
+        }
       }
       // Showcomputer aanwijzen.
       if (body.showDeviceId != null && !setShowComputer(body.showDeviceId)) {

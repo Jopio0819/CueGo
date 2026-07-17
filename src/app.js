@@ -5,7 +5,7 @@ import * as showSync from './show-sync.js';
 import { saveAudio, loadAudio, deleteAudio, saveMeta, loadMeta } from './storage.js';
 import { exportProject, importProject } from './project.js';
 import { createControl, publicApi, detectServer } from './control.js';
-import { connectAppLink, deviceId } from './net-remote.js';
+import { connectAppLink, deviceId, defaultDeviceLabel } from './net-remote.js';
 import { createMidi, describeSignature, MIDI_SUPPORTED } from './midi.js';
 import { createProjectStore } from './projects-store.js';
 
@@ -2195,6 +2195,8 @@ async function initServerDetection() {
       onShow: (show) => { applyShow(show); }, // andere client wijzigde de show
       onState: (st) => { showState = st; applyRemotePlayback(); }, // afspeelbalk volgt de showcomputer
       label: deviceLabel(), // gaat meteen mee bij het verbinden
+      isLocked: () => locked, // gaat mee in het levensteken
+      onLock: (lockIt) => { if (lockIt !== locked) setLocked(lockIt); }, // op afstand (ont)grendeld
       onDevices: (info) => {
         devicesInfo = info;
         document.body.classList.toggle('is-showcomputer', info.showDeviceId === deviceId());
@@ -2211,8 +2213,18 @@ async function initServerDetection() {
 const DEVICE_LABEL_KEY = 'webqlab.deviceLabel';
 let devicesInfo = { showDeviceId: null, you: null, devices: [] };
 
+// Zelf een naam gegeven? Die wint. Anders iets herkenbaars uit de browser afleiden.
 function deviceLabel() {
-  return localStorage.getItem(DEVICE_LABEL_KEY) || '';
+  return localStorage.getItem(DEVICE_LABEL_KEY) || defaultDeviceLabel();
+}
+
+// Een ander apparaat op afstand (ont)grendelen vanuit het Multi-device-paneel.
+async function setRemoteLock(id, lockIt) {
+  await fetch('api/devices', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ lockDeviceId: id, locked: lockIt }),
+  }).catch(() => {});
 }
 
 // Onze naam doorgeven zodat je de apparaten in de lijst uit elkaar houdt.
@@ -2236,7 +2248,10 @@ function renderDevices() {
   const list = $('deviceList');
   if (!list) return;
   const input = $('setDeviceLabel');
-  if (input && document.activeElement !== input) input.value = deviceLabel();
+  if (input && document.activeElement !== input) {
+    input.value = localStorage.getItem(DEVICE_LABEL_KEY) || '';
+    input.placeholder = defaultDeviceLabel(); // leeg = deze naam wordt gebruikt
+  }
 
   list.innerHTML = '';
   if (!devicesInfo.devices.length) {
@@ -2257,16 +2272,28 @@ function renderDevices() {
 
     const tag = document.createElement('span');
     tag.className = 'device-tag';
-    tag.textContent = d.isShow ? '🔊 showcomputer' : '';
+    tag.textContent = [d.isShow ? '🔊 showcomputer' : '', d.locked ? '🔒 vergrendeld' : ''].filter(Boolean).join(' · ');
 
     row.append(name, tag);
+
     if (!d.isShow) {
       const btn = document.createElement('button');
       btn.className = 'btn kb-clear';
       btn.textContent = 'Maak showcomputer';
+      btn.disabled = locked; // vanaf een vergrendeld apparaat niets omgooien
       btn.addEventListener('click', () => claimShowComputer(d.deviceId));
       row.appendChild(btn);
     }
+
+    const lockBtn = document.createElement('button');
+    lockBtn.className = 'btn kb-clear';
+    lockBtn.textContent = d.locked ? 'Ontgrendel' : 'Vergrendel';
+    // Een vergrendeld apparaat mag zichzelf (of anderen) niet losmaken — anders
+    // is het slot betekenisloos.
+    lockBtn.disabled = locked;
+    lockBtn.addEventListener('click', () => setRemoteLock(d.deviceId, !d.locked));
+    row.appendChild(lockBtn);
+
     list.appendChild(row);
   }
 }
@@ -2276,8 +2303,9 @@ function bindDevices() {
   if (!input) return;
   input.addEventListener('change', (e) => {
     const label = e.target.value.trim();
-    localStorage.setItem(DEVICE_LABEL_KEY, label);
-    sendDeviceLabel(label);
+    if (label) localStorage.setItem(DEVICE_LABEL_KEY, label);
+    else localStorage.removeItem(DEVICE_LABEL_KEY); // leeg = terug naar de standaardnaam
+    sendDeviceLabel(deviceLabel());
   });
 }
 
