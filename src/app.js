@@ -1193,7 +1193,7 @@ function bindSettings() {
 
   $('saveKeysBtn').addEventListener('click', () => {
     const blob = new Blob([JSON.stringify({ format: 'webqlab-keybinds', version: 1, keybinds }, null, 2)], { type: 'application/json' });
-    downloadBlob(blob, 'sneltoetsen.webqlabkeys');
+    downloadBlob(blob, 'sneltoetsen.cgokeys');
   });
   $('openKeysBtn').addEventListener('click', () => $('keysInput').click());
   $('keysInput').addEventListener('change', async (e) => {
@@ -1286,7 +1286,7 @@ async function saveProject() {
   });
   if (name == null) return false;
   setProjectName(name);
-  const filename = projectName.replace(/[^\w\-. ]+/g, '_') + '.webqlab';
+  const filename = projectName.replace(/[^\w\-. ]+/g, '_') + '.cgo';
   try {
     const kb = settings.saveKeybindsWithProject ? keybinds : null; // optioneel sneltoetsen meenemen
     const blob = await exportProject(cues.cues, settings, kb);
@@ -1306,7 +1306,7 @@ async function openProjectFile(file) {
   try {
     const proj = await importProject(await file.arrayBuffer());
     await loadProject(proj);
-    setProjectName((file.name || 'show').replace(/\.webqlab$/i, '').replace(/\.[^.]+$/, ''));
+    setProjectName((file.name || 'show').replace(/\.cgo$/i, '').replace(/\.[^.]+$/, ''));
     closeSettings();
   } catch (err) {
     console.error(err);
