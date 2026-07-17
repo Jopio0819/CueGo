@@ -53,7 +53,7 @@ Supported formats: whatever the browser can decode (mp3, wav, m4a, aac, ogg, fla
 | Drag a cue | Reorder |
 
 Shortcuts are **editable** under **Settings → Shortcuts** (with a Default and a VLC preset), and can be
-saved/loaded as a separate `.webqlabkeys` file.
+saved/loaded as a separate `.cgokeys` file.
 
 ## The cue inspector
 
@@ -101,7 +101,7 @@ transition and play-all.
 
 *Cue triggers* — every cue can have **its own MIDI trigger**, set in the inspector: select a cue,
 click the MIDI trigger field and press a pad. That pad then fires that cue directly — the classic
-pad-per-cue setup. Triggers are saved with the show (both auto-save and `.webqlab` files).
+pad-per-cue setup. Triggers are saved with the show (both auto-save and `.cgo` files).
 
 Message types: **Note On**, **Control Change** and **Program Change**, each with its channel. Only
 *presses* trigger — note-off, note-on with velocity 0 and CC-release are ignored, so one press is one
@@ -163,8 +163,8 @@ when CueGo is hosted statically — on GitHub Pages you only get the JavaScript 
 Under **Settings → Project**:
 
 - **New…** — start an empty show (asks to save first if there are unsaved changes).
-- **Save…** — save the whole show (order, the audio itself, and settings) to one `.webqlab` file. You choose a name.
-- **Open…** — load a `.webqlab` file (asks to save first if needed).
+- **Save…** — save the whole show (order, the audio itself, and settings) to one `.cgo` file. You choose a name.
+- **Open…** — load a `.cgo` file (asks to save first if needed).
 
 Your current show is also **auto-saved between sessions**: audio in IndexedDB, metadata in localStorage,
 so a refresh brings everything back. The **project title** next to the logo is click-to-edit.
@@ -201,5 +201,5 @@ and the strongest password hashing. Over HTTP on a plain IP those degrade gracef
 - `src/audio-engine.js` — Web Audio: decode, play, pause/seek, fades, per-cue in/out, loop, crossfade.
 - `src/cue-model.js` — cue data model, cue list, sorting, reordering.
 - `src/storage.js` — auto-save (IndexedDB + localStorage).
-- `src/project.js` — save/open a whole show as one `.webqlab` file.
+- `src/project.js` — save/open a whole show as one `.cgo` file.
 - `src/app.js` — UI, keyboard, selection, transport, settings, locking, rendering.

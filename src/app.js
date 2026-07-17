@@ -1488,7 +1488,7 @@ async function downloadProject() {
   setProjectName(name);
   try {
     const blob = await buildProjectBlob();
-    downloadBlob(blob, projectName.replace(/[^\w\-. ]+/g, '_') + '.webqlab');
+    downloadBlob(blob, projectName.replace(/[^\w\-. ]+/g, '_') + '.cgo');
     dirty = false;
     return true;
   } catch (err) {

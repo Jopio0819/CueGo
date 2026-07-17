@@ -5,8 +5,8 @@
 testaudio/
 
 # Geëxporteerde shows / presets (horen niet in de repo)
-*.webqlab
-*.webqlabkeys
+*.cgo
+*.cgokeys
 
 # Opgeslagen shows (lokale opslag van "Recente projecten")
 projects/

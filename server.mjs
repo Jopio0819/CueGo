@@ -58,11 +58,11 @@ const MIME = {
 
 const PROJECTS_DIR = join(ROOT, 'projects');
 
-// Alleen een kale bestandsnaam met .webqlab. Weert path traversal (../).
+// Alleen een kale bestandsnaam met .cgo. Weert path traversal (../).
 function safeProjectName(raw) {
   const base = String(raw || '').replace(/[/\\]/g, '').replace(/^\.+/, '').trim();
-  const name = base.replace(/\.webqlab$/i, '').replace(/[^\w\-. ]+/g, '_').slice(0, 120);
-  return name ? `${name}.webqlab` : null;
+  const name = base.replace(/\.cgo$/i, '').replace(/[^\w\-. ]+/g, '_').slice(0, 120);
+  return name ? `${name}.cgo` : null;
 }
 
 async function listProjects() {
@@ -70,9 +70,9 @@ async function listProjects() {
     const names = await readdir(PROJECTS_DIR);
     const out = [];
     for (const n of names) {
-      if (!n.toLowerCase().endsWith('.webqlab')) continue;
+      if (!n.toLowerCase().endsWith('.cgo')) continue;
       const s = await stat(join(PROJECTS_DIR, n)).catch(() => null);
-      if (s?.isFile()) out.push({ name: n.replace(/\.webqlab$/i, ''), size: s.size, savedAt: s.mtimeMs });
+      if (s?.isFile()) out.push({ name: n.replace(/\.cgo$/i, ''), size: s.size, savedAt: s.mtimeMs });
     }
     return out.sort((a, b) => b.savedAt - a.savedAt);
   } catch {
@@ -588,7 +588,7 @@ const server = createServer(async (req, res) => {
         if (!buf) return;
         await mkdir(PROJECTS_DIR, { recursive: true });
         await writeFile(file, buf);
-        json(res, 200, { ok: true, name: name.replace(/\.webqlab$/i, ''), size: buf.length });
+        json(res, 200, { ok: true, name: name.replace(/\.cgo$/i, ''), size: buf.length });
         return;
       }
       if (req.method === 'DELETE') {
