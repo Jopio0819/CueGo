@@ -15,6 +15,7 @@
 // Bij het starten wordt om een admin-wachtwoord gevraagd: dat vergrendelt elk
 // apparaat tot het daar is ingevuld, en remotes moeten het meesturen.
 import { createServer } from 'node:http';
+import { createServer as createHttpsServer } from 'node:https';
 import { readFile, writeFile, readdir, stat, mkdir, unlink } from 'node:fs/promises';
 import { extname, join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -24,6 +25,7 @@ import { createInterface } from 'node:readline';
 import { execFile, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
 import { parseOsc, oscToCommand } from './osc.mjs';
+import { generateCert } from './cert.mjs';
 
 const ROOT = fileURLToPath(new URL('.', import.meta.url));
 const PORT = process.env.PORT ? Number(process.env.PORT) : 4321;
@@ -627,7 +629,7 @@ function openSse(req, res, role, deviceId, label) {
 
 // --- HTTP -------------------------------------------------------------------
 
-const server = createServer(async (req, res) => {
+const handleRequest = async (req, res) => {
   try {
     const url = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
     let urlPath = decodeURIComponent(url.pathname);
@@ -636,7 +638,7 @@ const server = createServer(async (req, res) => {
     // server-afhankelijke opties (netwerk-remote, OSC) getoond worden.
     if (urlPath === '/api/ping') {
       json(res, 200, {
-        cuego: true, version: 1, port: PORT, ips: lanIps(),
+        cuego: true, version: 1, port: PORT, ips: lanIps(), httpsPort: httpsActive ? HTTPS_PORT : null,
         adminLock: !!adminPassword, // apparaten starten dan vergrendeld
         osc: { enabled: oscListening, port: OSC_PORT },
       });
@@ -879,7 +881,65 @@ const server = createServer(async (req, res) => {
       res.writeHead(500).end('Server error');
     }
   }
-});
+};
+
+const server = createServer(handleRequest);
+
+// --- Https (voor MIDI e.d. op andere apparaten) -----------------------------
+// Web MIDI en consorten vereisen een secure context, en http://<lan-ip> is dat
+// nooit. Daarom praat CueGo óók https, met een zelfgemaakt certificaat (puur
+// Node — zie cert.mjs). Eén keer per apparaat de browserwaarschuwing accepteren
+// en dat apparaat is 'm voorgoed: een volwaardige secure context.
+const HTTPS_PORT = process.env.CUEGO_HTTPS_PORT ? Number(process.env.CUEGO_HTTPS_PORT) : 4322;
+const CERT_DIR = join(ROOT, 'cert');
+let httpsActive = false;
+
+async function ensureCertFiles() {
+  const ips = ['127.0.0.1', ...lanIps()];
+  const hostnames = ['localhost'];
+  const metaFile = join(CERT_DIR, 'meta.json');
+  try {
+    const meta = JSON.parse(await readFile(metaFile, 'utf8'));
+    const dekt = ips.every((ip) => meta.ips?.includes(ip));
+    const vers = (meta.madeAt || 0) > Date.now() - 380 * 24 * 3600 * 1000; // vóór de 397-dagen-afloop
+    if (dekt && vers) {
+      return {
+        key: await readFile(join(CERT_DIR, 'key.pem')),
+        cert: await readFile(join(CERT_DIR, 'cert.pem')),
+      };
+    }
+  } catch { /* nog geen certificaat */ }
+
+  // Nieuw certificaat (eerste keer, ander IP, of bijna verlopen).
+  const { key, cert } = generateCert({ ips, hostnames });
+  await mkdir(CERT_DIR, { recursive: true });
+  await writeFile(join(CERT_DIR, 'key.pem'), key);
+  await writeFile(join(CERT_DIR, 'cert.pem'), cert);
+  await writeFile(metaFile, JSON.stringify({ ips, madeAt: Date.now() }));
+  console.log('Nieuw https-certificaat gemaakt — apparaten zien de waarschuwing (eenmalig) opnieuw.');
+  return { key: Buffer.from(key), cert: Buffer.from(cert) };
+}
+
+async function startHttps() {
+  try {
+    const { key, cert } = await ensureCertFiles();
+    const httpsServer = createHttpsServer({ key, cert }, handleRequest);
+    httpsServer.requestTimeout = 15000;
+    httpsServer.headersTimeout = 16000;
+    httpsServer.on('error', (err) => console.log(`Https niet gestart: ${err.message} — http blijft gewoon werken.`));
+    httpsServer.listen(HTTPS_PORT, () => {
+      httpsActive = true;
+      const ips = lanIps();
+      if (ips.length) {
+        console.log(`Met MIDI (https): ${ips.map((ip) => `https://${ip}:${HTTPS_PORT}`).join('  ')}`);
+        console.log('  eerste keer per apparaat: waarschuwing accepteren (Geavanceerd → Doorgaan).');
+      }
+    });
+  } catch (err) {
+    // Https is een extraatje; een start mag er nooit op stranden.
+    console.log(`Https niet beschikbaar (${err.message}) — http blijft gewoon werken.`);
+  }
+}
 
 // --- OSC (UDP) --------------------------------------------------------------
 // Een lichttafel of show-control-systeem stuurt OSC over UDP; de browser kan geen
@@ -954,6 +1014,7 @@ if (!(await maybeUpdate())) {
     else if (ips.length) console.log('Let op: zonder admin-wachtwoord kan iedereen op dit netwerk de show bedienen.');
     if (adminPassword && !oscEnabled()) console.log('OSC uit: OSC kent geen wachtwoord. Toch aanzetten? CUEGO_OSC=on');
     startOsc();
+    startHttps();
     openBrowser(`http://localhost:${PORT}`);
   });
 }

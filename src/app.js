@@ -2406,8 +2406,12 @@ function updateMidiUI() {
   if (!note || !list) return;
 
   if (!MIDI_SUPPORTED) {
-    // Pagina blijft bereikbaar, maar legt uit waarom er niets te kiezen valt.
-    note.textContent = 'Web MIDI wordt niet ondersteund in deze browser. Gebruik Chrome of Edge (en https of localhost).';
+    // Meestal is dit géén browserprobleem maar een onveilige herkomst (http via
+    // een LAN-IP). De server praat ook https — wijs de concrete deur aan.
+    const ip = serverInfo?.ips?.[0];
+    note.textContent = serverInfo?.httpsPort && ip && !window.isSecureContext
+      ? `MIDI werkt hier niet via http. Open CueGo op dit apparaat via https://${ip}:${serverInfo.httpsPort} — accepteer één keer de waarschuwing (Geavanceerd → Doorgaan) en MIDI doet het.`
+      : 'Web MIDI wordt niet ondersteund in deze browser. Gebruik Chrome of Edge (en https of localhost).';
     if (field) field.hidden = true;
     list.hidden = true;
     if (hint) hint.hidden = true;

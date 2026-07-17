@@ -121,8 +121,10 @@ Message types: **Note On**, **Control Change** and **Program Change**, each with
 command and never two. A button already in use gets *moved* to its new binding (across workspace
 actions and cue triggers alike), so one button never fires two things.
 
-Bindings are stored per browser. Chrome/Edge only, and needs a secure context (https or localhost);
-elsewhere CueGo hides the switch and says why.
+Bindings are stored per browser. Chrome/Edge only, and needs a secure context. On the machine
+running the server that's just `localhost`; on **other devices** open CueGo over the built-in
+**https** instead (see below) and MIDI works there too. On a plain-http origin CueGo hides the
+switch and points you to the https URL.
 
 **Network remote** — only when running locally (`node server.mjs`). Open `remote.html` on a phone
 or tablet on the same network; the URL is shown under **Settings → Control**:
@@ -201,8 +203,14 @@ GitHub Pages tips: put the custom domain on the **project** repo's Pages setting
 `username.github.io` user-site repo, or it takes over your whole github.io). Because links are relative
 (`app.html`, `assets/logo.png`), it works both on a custom domain and on `username.github.io/cuego/`.
 
-Some features need a **secure context** (HTTPS or localhost): the folder picker (File System Access API)
-and the strongest password hashing. Over HTTP on a plain IP those degrade gracefully.
+Some features need a **secure context** (https or localhost): Web MIDI, the modern folder picker
+and the strongest password hashing. A LAN ip over plain http never qualifies — so when self-hosting,
+the server also speaks **https** on port 4322 with a self-signed certificate it generates itself
+(pure Node, nothing to install; kept in `cert/`). Open `https://<ip>:4322` on a device, accept the
+browser warning once (Advanced → Proceed), and that device is a full secure context from then on —
+the certificate is reused across restarts, so the warning really is one-time per device. The
+certificate covers the current LAN ip and is regenerated automatically when the ip changes or it
+nears expiry. Different port: `CUEGO_HTTPS_PORT=4443`.
 
 ## Structure
 

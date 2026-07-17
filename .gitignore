@@ -13,3 +13,6 @@ projects/
 
 # Gedeelde show (server is eigenaar bij zelf-hosten)
 show/
+
+# Zelfgemaakt https-certificaat (per installatie)
+cert/
