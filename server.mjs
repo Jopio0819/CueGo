@@ -21,6 +21,8 @@ import { fileURLToPath } from 'node:url';
 import { networkInterfaces } from 'node:os';
 import { createSocket } from 'node:dgram';
 import { createInterface } from 'node:readline';
+import { execFile, spawn } from 'node:child_process';
+import { promisify } from 'node:util';
 import { parseOsc, oscToCommand } from './osc.mjs';
 
 const ROOT = fileURLToPath(new URL('.', import.meta.url));
@@ -93,6 +95,73 @@ function readBuffer(req, limit = 2e9) {
     req.on('end', () => resolve(Buffer.concat(chunks)));
     req.on('error', reject);
   });
+}
+
+// --- Update-check -----------------------------------------------------------
+// CueGo wordt als git-repo gekloond, dus kunnen we zien of er nieuwere code is.
+// Regel één: dit mag een start NOOIT ophouden. Geen netwerk, geen git, geen
+// upstream, GitHub traag → korte timeout, stil doorstarten. Een show die niet
+// begint omdat een update-check hangt is oneindig veel erger dan verouderde code.
+// Uitzetten kan met CUEGO_NO_UPDATE_CHECK=1.
+
+const execFileAsync = promisify(execFile);
+const git = (args, timeout = 5000) =>
+  execFileAsync('git', args, { cwd: ROOT, timeout }).then((r) => r.stdout.trim());
+
+async function checkForUpdate() {
+  if (process.env.CUEGO_NO_UPDATE_CHECK) return null;
+  try {
+    await git(['rev-parse', '--is-inside-work-tree'], 2000); // zip-download? dan niets te doen
+    await git(['fetch', '--quiet', 'origin'], 5000);
+    const behind = Number(await git(['rev-list', '--count', 'HEAD..@{u}'], 3000));
+    if (!behind) return null;
+    const dirty = (await git(['status', '--porcelain'], 3000)).length > 0;
+    return { behind, dirty };
+  } catch {
+    return null; // offline, geen upstream, geen git — allemaal prima
+  }
+}
+
+function askLine(prompt) {
+  return new Promise((resolve) => {
+    const rl = createInterface({ input: process.stdin, output: process.stdout, terminal: true });
+    rl.question(prompt, (answer) => {
+      rl.close();
+      resolve(String(answer).trim().toLowerCase());
+    });
+  });
+}
+
+// Geeft true als CueGo opnieuw start (dan moet deze start stoppen).
+async function maybeUpdate() {
+  if (!process.stdin.isTTY) return false; // geen terminal om iets te vragen
+  const info = await checkForUpdate();
+  if (!info) return false;
+
+  const aantal = info.behind === 1 ? '1 update' : `${info.behind} updates`;
+  if (info.dirty) {
+    // Niet stiekem over iemands eigen wijzigingen heen pullen.
+    console.log(`Er ${info.behind === 1 ? 'is' : 'zijn'} ${aantal} beschikbaar, maar je hebt lokale wijzigingen. Bijwerken overgeslagen.`);
+    return false;
+  }
+
+  const antwoord = await askLine(`Er ${info.behind === 1 ? 'is' : 'zijn'} ${aantal} beschikbaar. Nu bijwerken? (j/N): `);
+  if (!['j', 'ja', 'y', 'yes'].includes(antwoord)) return false;
+
+  try {
+    await git(['pull', '--ff-only'], 30000);
+  } catch (err) {
+    console.log(`Bijwerken mislukt: ${err.message.split('\n')[0]}`);
+    console.log('CueGo start met de huidige versie.');
+    return false;
+  }
+
+  // De statische bestanden worden per verzoek van schijf gelezen, maar deze
+  // server.mjs draait nog de oude code — dus opnieuw starten.
+  console.log('Bijgewerkt. CueGo start opnieuw…\n');
+  const child = spawn(process.execPath, [fileURLToPath(import.meta.url)], { stdio: 'inherit', cwd: ROOT });
+  child.on('exit', (code) => process.exit(code ?? 0));
+  return true;
 }
 
 // --- Admin-wachtwoord -------------------------------------------------------
@@ -729,18 +798,21 @@ function startOsc() {
   });
 }
 
-// Eerst het wachtwoord vragen, dán pas luisteren: anders kan een apparaat al
-// verbinden voordat we weten of er een slot op zit.
-await initAdminPassword();
+// Volgorde bij het starten: eerst de update-check (herstart eventueel met nieuwe
+// code), dan het wachtwoord vragen, dán pas luisteren — anders kan een apparaat
+// al verbinden voordat we weten of er een slot op zit.
+if (!(await maybeUpdate())) {
+  await initAdminPassword();
 
-server.listen(PORT, () => {
-  console.log(`CueGo draait op http://localhost:${PORT}`);
-  const ips = lanIps();
-  if (ips.length) {
-    console.log(`Afstandsbediening: ${ips.map((ip) => `http://${ip}:${PORT}/remote.html`).join('  ')}`);
-  }
-  if (adminPassword) console.log('Remotes vragen om het admin-wachtwoord.');
-  else if (ips.length) console.log('Let op: zonder admin-wachtwoord kan iedereen op dit netwerk de show bedienen.');
-  if (adminPassword && !oscEnabled()) console.log('OSC uit: OSC kent geen wachtwoord. Toch aanzetten? CUEGO_OSC=on');
-  startOsc();
-});
+  server.listen(PORT, () => {
+    console.log(`CueGo draait op http://localhost:${PORT}`);
+    const ips = lanIps();
+    if (ips.length) {
+      console.log(`Afstandsbediening: ${ips.map((ip) => `http://${ip}:${PORT}/remote.html`).join('  ')}`);
+    }
+    if (adminPassword) console.log('Remotes vragen om het admin-wachtwoord.');
+    else if (ips.length) console.log('Let op: zonder admin-wachtwoord kan iedereen op dit netwerk de show bedienen.');
+    if (adminPassword && !oscEnabled()) console.log('OSC uit: OSC kent geen wachtwoord. Toch aanzetten? CUEGO_OSC=on');
+    startOsc();
+  });
+}

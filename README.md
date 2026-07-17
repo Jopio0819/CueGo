@@ -6,13 +6,24 @@ No backend, no account — it works offline, which is exactly what you want duri
 
 ## Running it
 
+First time (also installs the `cuego` command and starts the server):
+
 ```bash
-cd webqlab
-node server.mjs
+git clone https://github.com/Jopio0819/cuego.git && cd cuego && node setup.mjs
 ```
 
-Then open **http://localhost:4321** (Chrome or Edge recommended). Running locally takes you
-**straight into the player** — the landing page is only for the public static site.
+After that, just type `cuego` from any directory (new terminal, macOS/Linux; on Windows use
+`node server.mjs` in the repo). Then open **http://localhost:4321** (Chrome or Edge recommended).
+Running locally takes you **straight into the player** — the landing page is only for the public
+static site.
+
+On boot the server checks whether the repo is behind GitHub and **asks** before updating
+(`j`/enter to skip). It never blocks a start: no network, no git or a slow GitHub means it just
+starts with what it has. Skip the check entirely with `CUEGO_NO_UPDATE_CHECK=1`. If you have local
+changes it won't pull over them.
+
+It also asks for an **admin password** on every start (empty = no lock): every device then starts
+locked until that password is entered on it (Settings → Security), and remotes must provide it too.
 
 Different port? `PORT=8080 node server.mjs`
 
