@@ -835,6 +835,8 @@ function bindPreviewBar() {
 }
 
 // --- Equalizer (fullscreen popup) ------------------------------------------
+// Grafiek met de échte gecombineerde frequentierespons van de zes filters
+// (via BiquadFilter.getFrequencyResponse) en sleepbare, genummerde punten.
 
 // Oudere cues (van vóór de EQ) hebben het veld nog niet.
 function ensureEq(c) {
@@ -857,61 +859,229 @@ function fmtDb(v) {
   return (v > 0 ? '+' : '−') + Math.abs(v).toFixed(1).replace(/\.0$/, '');
 }
 
-// Bouw de zes kolommen één keer.
-function buildEqUi() {
-  const wrap = $('eqBands');
-  if (!wrap || wrap.childElementCount) return;
+const EQ_VIEW_DB = 15; // y-as ±15 dB — iets ruimer dan de ±12-instelrange
+const EQ_FMIN = 20;
+const EQ_FMAX = 20000;
+let eqRespCtx = null; // mini-context, alleen om de respons uit te rekenen
+let eqFreqs = null; // log-verdeelde meetfrequenties voor de curve
+let eqDragBand = -1; // punt dat nu gesleept wordt (-1 = geen)
+
+// x = log-frequentie, y = dB. Zelfde afbeelding voor tekenen én aanwijzen.
+function eqMap(canvas) {
+  const w = canvas.clientWidth;
+  const h = canvas.clientHeight;
+  return {
+    w, h,
+    X: (f) => (Math.log10(f / EQ_FMIN) / Math.log10(EQ_FMAX / EQ_FMIN)) * w,
+    Y: (db) => h * (0.5 - db / (EQ_VIEW_DB * 2)),
+  };
+}
+
+// Gecombineerde respons in dB — geen benadering, maar wat de filters écht doen.
+function eqCurveDb(eq, freqs) {
+  eqRespCtx ||= new OfflineAudioContext(1, 128, 44100);
+  const totaal = new Float32Array(freqs.length).fill(1);
+  const m = new Float32Array(freqs.length);
+  const f2 = new Float32Array(freqs.length);
   EQ_BANDS.forEach((band, i) => {
-    const col = document.createElement('div');
-    col.className = 'eq-band';
+    const f = eqRespCtx.createBiquadFilter();
+    f.type = band.type;
+    f.frequency.value = band.f;
+    if (band.type === 'peaking') f.Q.value = 1;
+    f.gain.value = eq[i] || 0;
+    f.getFrequencyResponse(freqs, m, f2);
+    for (let k = 0; k < freqs.length; k++) totaal[k] *= m[k];
+  });
+  return Array.from(totaal, (v) => 20 * Math.log10(Math.max(v, 1e-6)));
+}
 
-    const db = document.createElement('span');
-    db.className = 'eq-db';
+function drawEq() {
+  const canvas = $('eqCanvas');
+  const cue = cues.selected;
+  if (!canvas || !cue) return;
+  const { w, h, X, Y } = eqMap(canvas);
+  if (!w || !h) return; // popup (nog) niet zichtbaar
+  const dpr = window.devicePixelRatio || 1;
+  if (canvas.width !== Math.round(w * dpr) || canvas.height !== Math.round(h * dpr)) {
+    canvas.width = Math.round(w * dpr);
+    canvas.height = Math.round(h * dpr);
+  }
+  const g = canvas.getContext('2d');
+  g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  g.clearRect(0, 0, w, h);
 
-    const sliderWrap = document.createElement('div');
-    sliderWrap.className = 'eq-slider-wrap';
-    const input = document.createElement('input');
-    input.type = 'range';
-    input.min = String(-EQ_MAX_DB);
-    input.max = String(EQ_MAX_DB);
-    input.step = '0.5';
-    input.value = '0';
-    input.dataset.band = String(i);
-    sliderWrap.appendChild(input);
+  const css = getComputedStyle(document.documentElement);
+  const cLine = css.getPropertyValue('--line').trim() || '#262a33';
+  const cSterk = css.getPropertyValue('--line-strong').trim() || '#333a47';
+  const cVaag = css.getPropertyValue('--faint').trim() || '#5a6172';
+  const cAccent = css.getPropertyValue('--accent').trim() || '#4c8dff';
+  const cPaneel = css.getPropertyValue('--panel').trim() || '#14161c';
 
-    const freq = document.createElement('span');
-    freq.className = 'eq-freq';
-    freq.textContent = band.label;
-    const em = document.createElement('em');
-    em.textContent = band.type === 'lowshelf' ? 'laag' : band.type === 'highshelf' ? 'hoog' : 'Hz';
-    freq.appendChild(em);
+  // Raster: frequenties (log) en dB-lijnen, nullijn iets sterker.
+  g.font = '10px -apple-system, BlinkMacSystemFont, sans-serif';
+  g.textAlign = 'left';
+  g.textBaseline = 'top';
+  for (const f of [31, 62, 125, 250, 500, 1000, 2000, 4000, 8000, 16000]) {
+    const x = X(f);
+    g.strokeStyle = cLine;
+    g.beginPath(); g.moveTo(x, 0); g.lineTo(x, h); g.stroke();
+    g.fillStyle = cVaag;
+    g.fillText(f >= 1000 ? `${f / 1000}k` : String(f), x + 4, h - 14);
+  }
+  for (const db of [-10, -5, 5, 10]) {
+    const y = Y(db);
+    g.strokeStyle = cLine;
+    g.beginPath(); g.moveTo(0, y); g.lineTo(w, y); g.stroke();
+    g.fillStyle = cVaag;
+    g.fillText((db > 0 ? '+' : '') + db, 6, y + 3);
+  }
+  g.strokeStyle = cSterk;
+  g.beginPath(); g.moveTo(0, Y(0)); g.lineTo(w, Y(0)); g.stroke();
 
-    input.addEventListener('input', () => {
-      const v = parseFloat(input.value) || 0;
-      // Zelfde regel als volume/fades: geldt voor álle geselecteerde cues, en
-      // een spelende cue hoort het meteen.
-      applyToSelected((c) => { ensureEq(c)[i] = v; engine.updateEq(c.id, c.eq); });
-      db.textContent = fmtDb(v);
-      col.classList.toggle('actief', v !== 0);
-      persist();
-      syncEqStatus();
-    });
+  // Curve + vulling eronder.
+  if (!eqFreqs) {
+    eqFreqs = new Float32Array(240);
+    for (let i = 0; i < eqFreqs.length; i++) {
+      eqFreqs[i] = EQ_FMIN * Math.pow(EQ_FMAX / EQ_FMIN, i / (eqFreqs.length - 1));
+    }
+  }
+  const eq = ensureEq(cue);
+  const dbs = eqCurveDb(eq, eqFreqs);
+  g.beginPath();
+  dbs.forEach((db, i) => {
+    const x = X(eqFreqs[i]);
+    const y = Y(db);
+    if (i === 0) g.moveTo(x, y); else g.lineTo(x, y);
+  });
+  g.strokeStyle = cAccent;
+  g.lineWidth = 2;
+  g.stroke();
+  g.lineTo(w, h);
+  g.lineTo(0, h);
+  g.closePath();
+  g.globalAlpha = 0.10;
+  g.fillStyle = cAccent;
+  g.fill();
+  g.globalAlpha = 1;
 
-    col.append(db, sliderWrap, freq);
-    wrap.appendChild(col);
+  // Genummerde, sleepbare punten op hun eigen frequentie.
+  EQ_BANDS.forEach((band, i) => {
+    const x = X(band.f);
+    const y = Y(eq[i] || 0);
+    const actief = i === eqDragBand;
+    g.beginPath();
+    g.arc(x, y, 9, 0, Math.PI * 2);
+    g.fillStyle = actief ? cAccent : cPaneel;
+    g.fill();
+    g.strokeStyle = cAccent;
+    g.lineWidth = 1.5;
+    g.stroke();
+    g.fillStyle = actief ? '#fff' : cAccent;
+    g.textAlign = 'center';
+    g.textBaseline = 'middle';
+    g.font = 'bold 10px -apple-system, BlinkMacSystemFont, sans-serif';
+    g.fillText(String(i + 1), x, y + 0.5);
+    g.textAlign = 'left';
+    g.textBaseline = 'top';
+    g.font = '10px -apple-system, BlinkMacSystemFont, sans-serif';
   });
 }
 
-// Zet de schuiven op de waarden van de primaire cue.
-function syncEqUiFromCue() {
+// Welke band zit er (binnen 18px) onder de muis?
+function eqBandAt(canvas, mx, my) {
+  const cue = cues.selected;
+  if (!cue) return -1;
+  const { X, Y } = eqMap(canvas);
+  const eq = ensureEq(cue);
+  let beste = -1;
+  let besteAfstand = 18 * 18;
+  EQ_BANDS.forEach((band, i) => {
+    const dx = mx - X(band.f);
+    const dy = my - Y(eq[i] || 0);
+    const d = dx * dx + dy * dy;
+    if (d < besteAfstand) { besteAfstand = d; beste = i; }
+  });
+  return beste;
+}
+
+// Zelfde regel als volume/fades: geldt voor álle geselecteerde cues, en een
+// spelende cue hoort het meteen.
+function setEqBand(i, v) {
+  v = Math.max(-EQ_MAX_DB, Math.min(EQ_MAX_DB, Math.round(v * 2) / 2));
+  applyToSelected((c) => { ensureEq(c)[i] = v; engine.updateEq(c.id, c.eq); });
+  persist();
+  updateEqUi();
+}
+
+// Kaartjes, curve en status in één keer bijwerken vanaf de primaire cue.
+function updateEqUi() {
   const cue = cues.selected;
   if (!cue) return;
   const eq = ensureEq(cue);
-  document.querySelectorAll('#eqBands .eq-band').forEach((col, i) => {
-    const input = col.querySelector('input');
-    input.value = String(eq[i] || 0);
-    col.querySelector('.eq-db').textContent = fmtDb(eq[i] || 0);
-    col.classList.toggle('actief', !!eq[i]);
+  document.querySelectorAll('#eqBands .eq-band-card').forEach((card, i) => {
+    card.querySelector('.eq-db').textContent = `${fmtDb(eq[i] || 0)} dB`;
+    card.classList.toggle('actief', !!eq[i]);
+  });
+  drawEq();
+  syncEqStatus();
+}
+
+function buildEqUi() {
+  const wrap = $('eqBands');
+  if (!wrap || wrap.childElementCount) return;
+
+  EQ_BANDS.forEach((band, i) => {
+    const card = document.createElement('div');
+    card.className = 'eq-band-card';
+
+    const num = document.createElement('span');
+    num.className = 'eq-band-num';
+    num.textContent = String(i + 1);
+
+    const freq = document.createElement('div');
+    const b = document.createElement('b');
+    b.textContent = band.label;
+    const em = document.createElement('em');
+    em.textContent = band.type === 'lowshelf' ? 'shelf laag' : band.type === 'highshelf' ? 'shelf hoog' : 'Hz';
+    freq.append(b, em);
+
+    const db = document.createElement('span');
+    db.className = 'eq-db';
+    db.textContent = '0 dB';
+
+    card.append(num, freq, db);
+    wrap.appendChild(card);
+  });
+
+  const canvas = $('eqCanvas');
+  canvas.addEventListener('pointerdown', (e) => {
+    const r = canvas.getBoundingClientRect();
+    const i = eqBandAt(canvas, e.clientX - r.left, e.clientY - r.top);
+    if (i === -1) return;
+    eqDragBand = i;
+    canvas.classList.add('sleept');
+    canvas.setPointerCapture(e.pointerId);
+    drawEq();
+  });
+  canvas.addEventListener('pointermove', (e) => {
+    if (eqDragBand === -1) return;
+    const r = canvas.getBoundingClientRect();
+    const db = (0.5 - (e.clientY - r.top) / r.height) * EQ_VIEW_DB * 2;
+    setEqBand(eqDragBand, db);
+  });
+  const stopSleep = () => {
+    if (eqDragBand === -1) return;
+    eqDragBand = -1;
+    canvas.classList.remove('sleept');
+    drawEq();
+  };
+  canvas.addEventListener('pointerup', stopSleep);
+  canvas.addEventListener('pointercancel', stopSleep);
+  // Dubbelklik op een punt → alleen díe band terug naar 0.
+  canvas.addEventListener('dblclick', (e) => {
+    const r = canvas.getBoundingClientRect();
+    const i = eqBandAt(canvas, e.clientX - r.left, e.clientY - r.top);
+    if (i !== -1) setEqBand(i, 0);
   });
 }
 
@@ -924,10 +1094,8 @@ function openEq() {
   modal.hidden = false;
   void modal.offsetWidth;
   modal.classList.add('open');
-  // De gedraaide schuiven moeten precies zo lang zijn als hun kolom hoog is.
-  const w = modal.querySelector('.eq-slider-wrap');
-  if (w) $('eqBands').style.setProperty('--eq-h', `${w.clientHeight}px`);
-  syncEqUiFromCue();
+  updateEqUi();
+  requestAnimationFrame(drawEq); // nogmaals zodra de layout definitief staat
 }
 
 function closeEq() {
@@ -944,8 +1112,7 @@ function bindEq() {
   $('eqFlatBtn')?.addEventListener('click', () => {
     applyToSelected((c) => { c.eq = EQ_BANDS.map(() => 0); engine.updateEq(c.id, c.eq); });
     persist();
-    syncEqUiFromCue();
-    syncEqStatus();
+    updateEqUi();
   });
 }
 
@@ -2519,6 +2686,10 @@ async function applyShow(show) {
     // Niet de inspector verversen terwijl iemand in een veld typt — dan zou de
     // tekst onder z'n handen verspringen.
     if (!isTyping()) syncInspector();
+    // Staat hier de equalizer open terwijl een ánder aan de knoppen zit? Dan
+    // curve en kaartjes live meebewegen — maar niet terwijl je zelf sleept,
+    // anders vecht de binnenkomende sync met je muis.
+    if (!$('eqModal').hidden && eqDragBand === -1) updateEqUi();
   } finally {
     clearTimeout(showLoaderTimer);
     if (loadingEl) loadingEl.hidden = true;

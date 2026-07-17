@@ -669,67 +669,73 @@ body.dragging .drop-overlay { display: flex; }
   display: flex;
   flex-direction: column;
 }
-.eq-bands {
+/* Grafiek met de echte frequentierespons; de genummerde punten zijn sleepbaar. */
+.eq-graph-wrap {
   flex: 1;
   min-height: 0;
+  margin: 8px 20px 4px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--bg);
+  overflow: hidden;
+}
+.eq-graph-wrap canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  cursor: grab;
+  touch-action: none; /* slepen op touch niet laten kapen door scrollen */
+}
+.eq-graph-wrap canvas.sleept { cursor: grabbing; }
+
+/* Band-kaartjes onder de grafiek (uitlezing; de interactie zit in de grafiek) */
+.eq-bands {
   display: grid;
   grid-template-columns: repeat(6, 1fr);
-  gap: 12px;
-  padding: 10px 28px 6px;
+  gap: 10px;
+  padding: 10px 20px 4px;
 }
-.eq-band {
+.eq-band-card {
   display: flex;
-  flex-direction: column;
   align-items: center;
   gap: 10px;
-  min-height: 0;
+  padding: 9px 12px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--panel-2);
 }
-.eq-db {
-  font-variant-numeric: tabular-nums;
-  font-size: 14px;
-  color: var(--muted);
-  min-height: 20px;
-}
-.eq-band.actief .eq-db { color: var(--accent); font-weight: 600; }
-/* Verticale schuif: gedraaide range in een vaste kolom, schaalt mee met de kaart */
-.eq-slider-wrap {
-  flex: 1;
-  min-height: 0;
-  width: 44px;
-  position: relative;
-}
-.eq-slider-wrap input[type="range"] {
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  width: var(--eq-h, 320px); /* = hoogte van de wrap; zet JS bij het openen */
-  transform: translate(-50%, -50%) rotate(-90deg);
-  margin: 0;
-}
-.eq-freq {
-  font-size: 13px;
-  font-weight: 600;
+.eq-band-card.actief { border-color: var(--accent); }
+.eq-band-num {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 700;
+  background: var(--line-strong);
   color: var(--text);
 }
-.eq-freq em { display: block; font-style: normal; font-size: 10.5px; color: var(--faint); }
+.eq-band-card.actief .eq-band-num { background: var(--accent); color: #fff; }
+.eq-band-card b { font-size: 13px; }
+.eq-band-card em { display: block; font-style: normal; font-size: 10px; color: var(--faint); }
+.eq-db {
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+  font-size: 13px;
+  color: var(--muted);
+}
+.eq-band-card.actief .eq-db { color: var(--accent); font-weight: 600; }
+
 .eq-actions {
   display: flex;
   align-items: center;
   gap: 14px;
-  padding: 12px 28px 18px;
-  border-top: 1px solid var(--line);
+  padding: 12px 20px 16px;
 }
 .eq-actions .settings-note { margin: 0; }
-/* Nullijn-gevoel: streepje in het midden van elke kolom */
-.eq-slider-wrap::before {
-  content: "";
-  position: absolute;
-  top: 50%;
-  left: 4px;
-  right: 4px;
-  border-top: 1px dashed var(--line-strong);
-  pointer-events: none;
-}
 
 /* Korte melding rechtsonder (bv. een commando dat de showcomputer niet haalde) */
 .toast {

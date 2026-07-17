@@ -418,10 +418,13 @@ cuego.on('cuestart', e =&gt; console.log(e))</pre>
           <h2 id="eqTitle">Equalizer</h2>
           <button class="modal-close" data-eq-close aria-label="Sluiten">×</button>
         </div>
+        <div class="eq-graph-wrap">
+          <canvas id="eqCanvas"></canvas>
+        </div>
         <div class="eq-bands" id="eqBands"></div>
         <div class="eq-actions">
           <button id="eqFlatBtn" class="btn">Vlak (reset)</button>
-          <span class="settings-note">±12 dB per band · werkt direct door op een spelende cue</span>
+          <span class="settings-note">Sleep de punten in de grafiek · dubbelklik op een punt = die band terug naar 0 · ±12 dB · werkt direct door op een spelende cue</span>
         </div>
       </div>
     </div>
