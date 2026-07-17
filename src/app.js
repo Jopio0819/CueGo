@@ -867,15 +867,12 @@ let eqFreqs = null; // log-verdeelde meetfrequenties voor de curve
 let eqDragBand = -1; // punt dat nu gesleept wordt (-1 = geen)
 
 // x = log-frequentie, y = dB. Zelfde afbeelding voor tekenen én aanwijzen.
-// Kleine marge links/rechts zodat de buitenste punten (20 Hz en 20 kHz) niet
-// half buiten de grafiek vallen.
-const EQ_PAD = 20;
 function eqMap(canvas) {
   const w = canvas.clientWidth;
   const h = canvas.clientHeight;
   return {
     w, h,
-    X: (f) => EQ_PAD + (Math.log10(f / EQ_FMIN) / Math.log10(EQ_FMAX / EQ_FMIN)) * (w - EQ_PAD * 2),
+    X: (f) => (Math.log10(f / EQ_FMIN) / Math.log10(EQ_FMAX / EQ_FMIN)) * w,
     Y: (db) => h * (0.5 - db / (EQ_VIEW_DB * 2)),
   };
 }
@@ -959,8 +956,8 @@ function drawEq() {
   g.strokeStyle = cAccent;
   g.lineWidth = 2;
   g.stroke();
-  g.lineTo(w - EQ_PAD, h);
-  g.lineTo(EQ_PAD, h);
+  g.lineTo(w, h);
+  g.lineTo(0, h);
   g.closePath();
   g.globalAlpha = 0.10;
   g.fillStyle = cAccent;

@@ -7,14 +7,13 @@
 
 // 6-bands equalizer per cue. Shelves aan de uiteinden, peaking ertussen;
 // gain per band in dB (±12), 0 = neutraal.
-// Log-gelijkmatig over het volle hoorbare bereik (20 Hz – 20 kHz).
 export const EQ_BANDS = [
-  { f: 20, type: 'lowshelf', label: '20' },
-  { f: 80, type: 'peaking', label: '80' },
-  { f: 315, type: 'peaking', label: '315' },
-  { f: 1250, type: 'peaking', label: '1.2k' },
-  { f: 5000, type: 'peaking', label: '5k' },
-  { f: 20000, type: 'highshelf', label: '20k' },
+  { f: 60, type: 'lowshelf', label: '60' },
+  { f: 150, type: 'peaking', label: '150' },
+  { f: 400, type: 'peaking', label: '400' },
+  { f: 1000, type: 'peaking', label: '1k' },
+  { f: 3000, type: 'peaking', label: '3k' },
+  { f: 12000, type: 'highshelf', label: '12k' },
 ];
 export const EQ_MAX_DB = 12;
 
