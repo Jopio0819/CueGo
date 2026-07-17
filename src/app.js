@@ -1904,19 +1904,33 @@ function applyRemotePlayback() {
   setPlayIcon(!!info.playing);
 }
 
-// Eigen klokje van de meekijker: laat de balk dóórlopen tussen twee pushes in.
-// Stopt vanzelf zodra er niets meer speelt (of wij zelf de showcomputer worden).
+// Eigen animatielus van de meekijker — dezelfde 60fps-lus als de showcomputer,
+// maar dan gevoed door de gepushte (en bijgebogen) positie. Een interval van
+// 100ms is technisch juist maar óógt stapperig; pas op schermverversing wordt
+// het écht vloeiend. Stopt vanzelf zodra er niets meer speelt.
+let followRaf = null;
 let followTimer = null;
 function startFollowTicker() {
-  if (followTimer) return;
-  followTimer = setInterval(() => {
-    if (!isFollower() || !showState?.cues?.some((c) => c.playing)) {
-      clearInterval(followTimer);
-      followTimer = null;
-      return;
-    }
+  if (followRaf || followTimer) return;
+  const klaar = () => !isFollower() || !showState?.cues?.some((c) => c.playing);
+  const stop = () => {
+    cancelAnimationFrame(followRaf);
+    clearInterval(followTimer);
+    followRaf = null;
+    followTimer = null;
+  };
+  const frame = () => {
+    if (klaar()) { stop(); return; }
     applyRemotePlayback();
-  }, 100);
+    followRaf = requestAnimationFrame(frame);
+  };
+  followRaf = requestAnimationFrame(frame);
+  // Vangnet: in een verborgen tab staat requestAnimationFrame stil — dan volstaat
+  // een grove tik, en moet ook het stoppen hiervandaan kunnen komen.
+  followTimer = setInterval(() => {
+    if (klaar()) { stop(); return; }
+    if (document.visibilityState === 'hidden') applyRemotePlayback();
+  }, 500);
 }
 
 // Korte melding rechtsonder. Geen dialoog: dit mag een show nooit blokkeren,
