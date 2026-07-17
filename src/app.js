@@ -2612,6 +2612,25 @@ let serverInfo = null;
 let appLink = null;
 let linkConnected = false;
 
+// Tot de server ons vertelt wíé de showcomputer is (verbinden + eerste
+// devices-event), weten we niet of klikken hier iets doet. Zolang tonen we een
+// spinner op de afspeelknop i.p.v. stil te falen.
+let linkReady = false;
+let linkWaitTimer = null;
+function setLinkReady(ready) {
+  linkReady = ready;
+  document.body.classList.toggle('link-connecting', sharedShow && !linkReady);
+  clearTimeout(linkWaitTimer);
+  // Vangnet: nooit eindeloos blijven draaien als er onverhoopt geen devices-event
+  // komt — na een paar seconden geven we de knop toch vrij.
+  if (sharedShow && !linkReady) {
+    linkWaitTimer = setTimeout(() => {
+      linkReady = true;
+      document.body.classList.remove('link-connecting');
+    }, 8000);
+  }
+}
+
 // --- Gedeelde show (alleen zelf-gehost) -------------------------------------
 // De server is dan eigenaar van de cue-lijst en elke client toont dezelfde show.
 // Op statische hosting blijft alles lokaal, precies zoals het was.
@@ -2778,6 +2797,7 @@ async function initServerDetection() {
   // Lokaal? Dan luisteren naar commando's van remotes en onze toestand terugsturen.
   if (serverInfo) {
     sharedShow = true; // de server is nu eigenaar van de cue-lijst
+    setLinkReady(false); // spinner op de afspeelknop tot we onze rol kennen
     // Admin-wachtwoord op de server → dit apparaat begint vergrendeld, tot het
     // wachtwoord hiér is ingevuld (Instellingen → Beveiliging).
     adminLock = !!serverInfo.adminLock;
@@ -2788,7 +2808,11 @@ async function initServerDetection() {
       dispatch: control.dispatchLocal,
       getState: apiState,
       on: control.on, // pusht de toestand pas ná een render (niet halverwege een async dispatch)
-      onStatus: ({ connected }) => { linkConnected = connected; updateControlTab(); },
+      onStatus: ({ connected }) => {
+        linkConnected = connected;
+        if (!connected) setLinkReady(false); // verbinding kwijt → weer wachten op onze rol
+        updateControlTab();
+      },
       onShow: (show) => { applyShow(show); }, // andere client wijzigde de show
       // Afspeelbalk volgt de showcomputer; het klokje overbrugt de gaten tussen pushes.
       onState: (st) => {
@@ -2802,6 +2826,7 @@ async function initServerDetection() {
       onLock: (lockIt) => { if (lockIt !== locked) setLocked(lockIt); }, // op afstand (ont)grendeld
       onDevices: (info) => {
         devicesInfo = info;
+        setLinkReady(true); // de server heeft onze rol doorgegeven → knop vrij
         document.body.classList.toggle('is-showcomputer', info.showDeviceId === deviceId());
         renderDevices();
       },
