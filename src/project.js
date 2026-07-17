@@ -42,7 +42,7 @@ export async function exportProject(cues, settings, keybinds = null) {
 export async function importProject(arrayBuffer) {
   const bytes = new Uint8Array(arrayBuffer);
   const magic = new TextDecoder().decode(bytes.subarray(0, 4));
-  if (magic !== MAGIC) throw new Error('Geen geldig WebQLab-projectbestand.');
+  if (magic !== MAGIC) throw new Error('Geen geldig CueGo-projectbestand.');
   const headerLen = new DataView(arrayBuffer, 4, 4).getUint32(0, true);
   const headerStart = 8;
   const header = JSON.parse(new TextDecoder().decode(bytes.subarray(headerStart, headerStart + headerLen)));
