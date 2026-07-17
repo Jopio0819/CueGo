@@ -14,13 +14,14 @@ export async function fetchShow() {
   return await res.json();
 }
 
-// Stuur de hele show (naam + cue-lijst) naar de server. `appId` markeert ons als
-// afzender, zodat we onze eigen wijziging niet als update terugkrijgen.
-export async function pushShow(appId, cueMetas, name) {
+// Stuur de hele show (naam + cue-lijst + single cue-modus) naar de server.
+// `appId` markeert ons als afzender, zodat we onze eigen wijziging niet als
+// update terugkrijgen.
+export async function pushShow(appId, cueMetas, name, single) {
   const res = await fetch('api/show', {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ appId, cues: cueMetas, name }),
+    body: JSON.stringify({ appId, cues: cueMetas, name, single: !!single }),
   });
   if (!res.ok) throw new Error('Kon de show niet opslaan');
   return await res.json();

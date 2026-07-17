@@ -268,17 +268,21 @@ async function loadShow() {
   try {
     const data = JSON.parse(await readFile(SHOW_FILE, 'utf8'));
     showRev = data.rev || 0;
-    return { rev: showRev, name: data.name || '', cues: data.cues || [], updatedAt: data.updatedAt || 0 };
+    return { rev: showRev, name: data.name || '', single: !!data.single, cues: data.cues || [], updatedAt: data.updatedAt || 0 };
   } catch {
-    return { rev: showRev, name: '', cues: [], updatedAt: 0 }; // nog geen show
+    return { rev: showRev, name: '', single: false, cues: [], updatedAt: 0 }; // nog geen show
   }
 }
 
 // Schrijf de show weg en vertel de andere clients ervan. De afzender slaan we
 // over: die heeft de wijziging zelf al doorgevoerd.
-async function saveShow(cues, senderId, name) {
+async function saveShow(cues, senderId, name, single) {
+  // Single cue-modus hoort bij de show: het afspelen gebeurt op de showcomputer,
+  // dus een instelling die alleen op het bedienende apparaat leeft doet niets.
+  // Een oudere client die het veld niet meestuurt mag de stand niet terugzetten.
+  if (single == null) single = (await loadShow()).single;
   showRev += 1;
-  const data = { rev: showRev, name: name || '', cues, updatedAt: Date.now() };
+  const data = { rev: showRev, name: name || '', single: !!single, cues, updatedAt: Date.now() };
   await mkdir(SHOW_DIR, { recursive: true });
   await writeFile(SHOW_FILE, JSON.stringify(data));
   for (const c of clients) {
@@ -723,7 +727,7 @@ const handleRequest = async (req, res) => {
       if (req.method === 'PUT' || req.method === 'POST') {
         const body = await readJson(req, 5e7).catch(() => null);
         if (!body || !Array.isArray(body.cues)) { json(res, 400, { error: 'Verwacht { appId, cues, name }' }); return; }
-        const data = await saveShow(body.cues, body.appId, body.name);
+        const data = await saveShow(body.cues, body.appId, body.name, typeof body.single === 'boolean' ? body.single : null);
         json(res, 200, { ok: true, rev: data.rev });
         return;
       }

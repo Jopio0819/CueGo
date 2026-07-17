@@ -1634,6 +1634,7 @@ function bindSettings() {
       if (keep) fadeOutOthers(keep, 0.3);
     }
     render();
+    schedulePushShow(); // de modus geldt voor de hele show, dus ook voor de showcomputer
   });
   $('setBlockKeys').addEventListener('change', (e) => { settings.blockBrowserKeys = e.target.checked; saveSettings(); });
   $('setSaveKeybinds').addEventListener('change', (e) => { settings.saveKeybindsWithProject = e.target.checked; saveSettings(); });
@@ -2628,13 +2629,14 @@ function schedulePushShow() {
   clearTimeout(pushShowTimer);
   pushShowTimer = setTimeout(async () => {
     const metas = cues.cues.map(cueToMeta);
-    // Naam hoort bij de show, niet bij het apparaat — anders heet dezelfde show
-    // op elke client anders.
-    const body = JSON.stringify({ name: projectName, cues: metas });
+    // Naam en single cue-modus horen bij de show, niet bij het apparaat — anders
+    // heet dezelfde show op elke client anders, en speelt de showcomputer met
+    // een andere modus dan de client die 'm aanzette.
+    const body = JSON.stringify({ name: projectName, single: !!settings.singleCueMode, cues: metas });
     if (body === lastPushed) return; // niets werkelijk veranderd
     lastPushed = body;
     try {
-      await showSync.pushShow(appLink?.appId() ?? null, metas, projectName);
+      await showSync.pushShow(appLink?.appId() ?? null, metas, projectName, settings.singleCueMode);
     } catch (err) {
       console.warn('Show synchroniseren mislukt:', err.message);
     }
@@ -2693,8 +2695,21 @@ async function applyShow(show) {
     // Naam van de show overnemen (die hoort bij de show, niet bij dit apparaat).
     if (show.name && show.name !== projectName) setProjectName(show.name);
 
+    // Single cue-modus hoort ook bij de show: zet een client 'm aan, dan moet
+    // de showcomputer (waar het geluid vandaan komt) 'm ook hanteren.
+    if (typeof show.single === 'boolean' && show.single !== settings.singleCueMode) {
+      settings.singleCueMode = show.single;
+      saveSettings();
+      $('setSingleCue').checked = show.single;
+      applySingleCueBadge();
+      if (show.single) {
+        const keep = [...engine.voices.keys()][0];
+        if (keep) fadeOutOthers(keep, 0.3);
+      }
+    }
+
     saveMeta(cues.cues); // lokale cache bijwerken
-    lastPushed = JSON.stringify({ name: projectName, cues: cues.cues.map(cueToMeta) }); // kwam van de server
+    lastPushed = JSON.stringify({ name: projectName, single: !!settings.singleCueMode, cues: cues.cues.map(cueToMeta) }); // kwam van de server
     render();
     // Niet de inspector verversen terwijl iemand in een veld typt — dan zou de
     // tekst onder z'n handen verspringen.
@@ -2721,8 +2736,8 @@ async function uploadWholeShow() {
     }
   }
   const metas = cues.cues.map(cueToMeta);
-  lastPushed = JSON.stringify({ name: projectName, cues: metas });
-  await showSync.pushShow(appLink?.appId() ?? null, metas, projectName).catch((err) => console.warn(err.message));
+  lastPushed = JSON.stringify({ name: projectName, single: !!settings.singleCueMode, cues: metas });
+  await showSync.pushShow(appLink?.appId() ?? null, metas, projectName, settings.singleCueMode).catch((err) => console.warn(err.message));
 }
 
 // Bij opstarten: heeft de server een show, dan wint die. Is de server leeg en
