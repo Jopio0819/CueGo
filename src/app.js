@@ -2371,13 +2371,20 @@ function renderDevices() {
       row.appendChild(btn);
     }
 
+    const isMe = d.deviceId === deviceId();
     const lockBtn = document.createElement('button');
     lockBtn.className = 'btn kb-clear';
     lockBtn.textContent = d.locked ? 'Ontgrendel' : 'Vergrendel';
-    // Een vergrendeld apparaat mag zichzelf (of anderen) niet losmaken — anders
-    // is het slot betekenisloos.
-    lockBtn.disabled = locked;
-    lockBtn.addEventListener('click', () => setRemoteLock(d.deviceId, !d.locked));
+    if (isMe && locked) {
+      // Jezelf losmaken mag altijd — maar dan via het wachtwoord. Zonder deze
+      // uitzondering zet je jezelf klem: de knop staat uit zodra je vergrendeld bent.
+      lockBtn.disabled = false;
+      lockBtn.addEventListener('click', () => toggleLock());
+    } else {
+      // Andermans apparaat omgooien mag niet vanaf een vergrendeld apparaat.
+      lockBtn.disabled = locked;
+      lockBtn.addEventListener('click', () => setRemoteLock(d.deviceId, !d.locked));
+    }
     row.appendChild(lockBtn);
 
     list.appendChild(row);
