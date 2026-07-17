@@ -2097,15 +2097,53 @@ function bindMidiSettings() {
   const sw = $('setMidi');
   if (sw) sw.addEventListener('change', (e) => setMidiEnabled(e.target.checked));
 
-  // Afstandsbediening aan/uit. De status zit in de toestand die we pushen, dus
-  // elk verbonden apparaat ziet de wijziging meteen (en de server weigert commando's).
+  // Afstandsbediening aan/uit.
   const rw = $('setRemote');
   if (rw) rw.addEventListener('change', (e) => {
     settings.remoteEnabled = e.target.checked;
     saveSettings();
-    appLink?.pushState(true); // direct doorgeven, niet wachten op de volgende tick
+    appLink?.pushState(true);
     updateControlTab();
   });
+
+  // --- MIDI preset import/export --------------------------------------------
+  const saveMidiBtn = $('saveMidiBtn');
+  const openMidiBtn = $('openMidiBtn');
+  const midiInput = $('midiInput');
+
+  if (saveMidiBtn) {
+    saveMidiBtn.addEventListener('click', () => {
+      const blob = new Blob(
+        [JSON.stringify({ format: 'webqlab-midi', version: 1, bindings: midiBinds }, null, 2)],
+        { type: 'application/json' }
+      );
+      downloadBlob(blob, 'midi-preset.cgomconfg');
+    });
+  }
+
+  if (openMidiBtn) {
+    openMidiBtn.addEventListener('click', () => midiInput?.click());
+  }
+
+  if (midiInput) {
+    midiInput.addEventListener('change', async (e) => {
+      const file = e.target.files[0];
+      e.target.value = '';
+      if (!file) return;
+      try {
+        const data = JSON.parse(await file.text());
+        const incoming = data.bindings || data;
+        if (typeof incoming !== 'object') throw new Error('Geen geldige MIDI-koppelingen.');
+        // Overwrite current bindings (keeping only actions that exist)
+        for (const key of Object.keys(midiBinds)) delete midiBinds[key];
+        Object.assign(midiBinds, incoming);
+        saveMidiBinds();
+        renderMidiBinds();
+      } catch (err) {
+        alert('Kon MIDI-preset niet lezen: ' + err.message);
+      }
+    });
+  }
 }
 
 // --- MIDI-trigger per cue (inspector) --------------------------------------
