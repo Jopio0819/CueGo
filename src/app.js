@@ -124,6 +124,9 @@ function render() {
   });
 
   syncTransport();
+  // Vers opgebouwde rijen hebben lege voortgangsbalkjes; bij een gepauzeerde cue
+  // draait de animatielus niet meer, dus die tekenen we hier één keer terug.
+  drawVoiceFills();
   // Zijn wij niet de showcomputer, dan zegt onze eigen engine niets: de rijen en
   // de balk krijgen de toestand van de showcomputer er weer overheen.
   if (isFollower()) applyRemotePlayback();
@@ -625,20 +628,30 @@ function handleEsc() {
 // --- Voortgang + afspeelbalk -----------------------------------------------
 
 let rafId = null;
+// Teken de voortgangsbalkjes van alle klinkende én gepauzeerde cues. Een
+// gepauzeerde cue houdt z'n groene vlak (je wilt zíén waar je gebleven bent —
+// meekijkers deden dat al, de host hoort dat ook te doen). Geeft terug of er
+// nog iets écht speelt, zodat de animatielus weet of hij door moet.
+function drawVoiceFills() {
+  let anyPlaying = false;
+  document.querySelectorAll('.progress-fill').forEach((f) => (f.style.width = '0%'));
+  for (const cueId of engine.voices.keys()) {
+    const playing = engine.isPlaying(cueId);
+    if (!playing && !engine.isPaused(cueId)) continue;
+    if (playing) anyPlaying = true;
+    const c = cues.getById(cueId);
+    const dur = (c && engine.playLength(c)) || 1;
+    const pct = Math.min(1, engine.position(cueId) / dur);
+    const fill = document.querySelector(`[data-fill="${cueId}"]`);
+    if (fill) fill.style.width = `${pct * 100}%`;
+  }
+  return anyPlaying;
+}
+
 function animateProgress() {
   if (rafId) return;
   const tick = () => {
-    let anyActive = false;
-    document.querySelectorAll('.progress-fill').forEach((f) => (f.style.width = '0%'));
-    for (const cueId of engine.voices.keys()) {
-      if (!engine.isPlaying(cueId)) continue;
-      anyActive = true;
-      const c = cues.getById(cueId);
-      const dur = (c && engine.playLength(c)) || 1;
-      const pct = Math.min(1, engine.position(cueId) / dur);
-      const fill = document.querySelector(`[data-fill="${cueId}"]`);
-      if (fill) fill.style.width = `${pct * 100}%`;
-    }
+    const anyActive = drawVoiceFills(); // laatste tik na een pauze tekent het bevroren vlak
     syncTransportProgress();
     syncPreviewBar();
     rafId = anyActive ? requestAnimationFrame(tick) : null;
