@@ -101,6 +101,15 @@
       .selfhost-title { margin: 0 0 4px; font-size: 15px; font-weight: 600; }
       .selfhost-sub { margin: 0 0 14px; color: var(--muted); font-size: 13px; }
       .selfhost-sub a { color: var(--accent); }
+      .cmd-tabs { display: flex; gap: 6px; margin-bottom: 8px; }
+      .cmd-tab {
+        cursor: pointer; font: inherit; font-size: 12px; font-weight: 600;
+        color: var(--faint); background: transparent;
+        border: 1px solid var(--line); border-radius: 7px; padding: 5px 12px;
+        transition: color .12s, border-color .12s;
+      }
+      .cmd-tab:hover { color: var(--muted); }
+      .cmd-tab.active { color: var(--text); border-color: var(--accent); }
       .cmd {
         display: flex; align-items: center; gap: 10px;
         background: var(--bg); border: 1px solid var(--line-strong); border-radius: 10px;
@@ -183,6 +192,10 @@
         <div class="selfhost">
           <p class="selfhost-title">Or host it yourself</p>
           <p class="selfhost-sub">Unlocks the network remote, OSC, and a shared show across every device. Needs <a href="https://nodejs.org" target="_blank" rel="noopener">Node</a> — no other install, no dependencies.</p>
+          <div class="cmd-tabs">
+            <button class="cmd-tab" type="button" data-os="mac">macOS / Linux</button>
+            <button class="cmd-tab" type="button" data-os="win">Windows</button>
+          </div>
           <div class="cmd">
             <code id="cmd">git clone https://github.com/Jopio0819/cuego.git &amp;&amp; cd cuego &amp;&amp; node setup.mjs</code>
             <button id="copyCmd" type="button" aria-label="Copy command">Copy</button>
@@ -239,6 +252,21 @@
     </div>
 
     <script>
+      // Per OS een eigen commando: Windows PowerShell 5 (de standaard) kent geen
+      // && — daar scheiden we met ; (werkt in elke PowerShell).
+      const COMMANDS = {
+        mac: 'git clone https://github.com/Jopio0819/cuego.git && cd cuego && node setup.mjs',
+        win: 'git clone https://github.com/Jopio0819/cuego.git; cd cuego; node setup.mjs',
+      };
+      const tabs = [...document.querySelectorAll('.cmd-tab')];
+      function setOs(os) {
+        document.getElementById('cmd').textContent = COMMANDS[os];
+        tabs.forEach((t) => t.classList.toggle('active', t.dataset.os === os));
+      }
+      tabs.forEach((t) => t.addEventListener('click', () => setOs(t.dataset.os)));
+      // Vooraf de juiste kiezen voor de bezoeker.
+      setOs(/Win/i.test(navigator.platform || navigator.userAgent) ? 'win' : 'mac');
+
       // Commando kopiëren. clipboard.writeText vereist een secure context; op
       // http valt 'ie terug op selecteren, zodat de knop nooit stil niets doet.
       const btn = document.getElementById('copyCmd');

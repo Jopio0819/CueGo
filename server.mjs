@@ -145,7 +145,7 @@ async function maybeUpdate() {
     return false;
   }
 
-  const antwoord = await askLine(`Er ${info.behind === 1 ? 'is' : 'zijn'} ${aantal} beschikbaar. Nu bijwerken? (j/N): `);
+  const antwoord = await askLine(`Er ${info.behind === 1 ? 'is' : 'zijn'} ${aantal} beschikbaar. Bijwerken? (j = ja, Enter = overslaan): `);
   if (!['j', 'ja', 'y', 'yes'].includes(antwoord)) return false;
 
   try {
