@@ -1841,16 +1841,34 @@ function remoteCue(id) {
   return showState?.cues?.find((c) => c.id === id) || null;
 }
 
-// Positie van een cue op de showcomputer, NU. Pushes komen hooguit een paar keer
-// per seconde (en trager als die tab op de achtergrond staat); daartussen tellen
-// we zelf de verstreken tijd erbij op — anders staat de balk te stotteren.
+// Positie van een cue op de showcomputer, NU — vloeiend. Elke push hard
+// overnemen zou elke ~halve seconde een sprongetje geven (netwerk-jitter maakt
+// dat de gepushte positie nooit exact aansluit op onze eigen telling). Daarom
+// loopt de getoonde positie gewoon op 1× snelheid door en buigt hij zachtjes
+// richting de gepushte waarheid: kleine fouten smelten weg, alleen een échte
+// sprong (seek, andere cue) wordt direct overgenomen.
+const smoothPos = new Map(); // cueId -> { pos, at }
+
 function remotePos(info) {
   if (!info) return 0;
   const basis = info.position || 0;
-  if (!info.playing) return basis; // gepauzeerd/stil → niets bijtellen
-  const verstreken = (performance.now() - showStateAt) / 1000;
-  const pos = basis + verstreken;
-  return info.duration ? Math.min(pos, info.duration) : pos;
+  if (!info.playing) { smoothPos.delete(info.id); return basis; } // gepauzeerd/stil → bevriezen
+  const nu = performance.now();
+  const doel = basis + (nu - showStateAt) / 1000; // waar de showcomputer nú zit
+  const klem = (p) => (info.duration ? Math.min(p, info.duration) : p);
+
+  const s = smoothPos.get(info.id);
+  if (!s || Math.abs(doel - s.pos) > 0.75) {
+    // Eerste meting, of een echte sprong → direct overnemen.
+    smoothPos.set(info.id, { pos: doel, at: nu });
+    return klem(doel);
+  }
+  const dt = (nu - s.at) / 1000;
+  s.at = nu;
+  // 1× snelheid plus een zachte correctie (±25% van de fout per tik) — en de
+  // balk mag daarbij nooit terugkruipen, dat oog vangt élk sprongetje terug.
+  s.pos = Math.max(s.pos, s.pos + dt + (doel - s.pos) * Math.min(1, dt * 1.5));
+  return klem(s.pos);
 }
 
 // Werk de rijen en de afspeelbalk bij met de toestand van de showcomputer.
@@ -1898,7 +1916,7 @@ function startFollowTicker() {
       return;
     }
     applyRemotePlayback();
-  }, 150);
+  }, 100);
 }
 
 // Korte melding rechtsonder. Geen dialoog: dit mag een show nooit blokkeren,
