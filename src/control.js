@@ -22,7 +22,7 @@ export function createControl(actions) {
 
   // Commando → actie. Elk commando krijgt een optioneel args-object.
   const COMMANDS = {
-    go: () => actions.go(),
+    go: (a) => actions.go(a),
     playAll: () => actions.playAll(),
     play: (a) => actions.play(a?.cue),
     stop: () => actions.stop(),
@@ -36,15 +36,27 @@ export function createControl(actions) {
     state: () => actions.state(),
   };
 
-  // Voer een commando uit. Onbekende commando's geven een nette fout terug.
-  function dispatch(cmd, args) {
+  // Voer een commando hier uit, zonder door te sturen. Gebruikt voor commando's
+  // die al van de server komen — anders zouden die in een lus terugkaatsen.
+  function dispatchLocal(cmd, args) {
     const fn = COMMANDS[cmd];
     if (!fn) throw new Error(`Onbekend commando: ${cmd}`);
     emit('command', { cmd, args });
     return fn(args);
   }
 
-  return { dispatch, on, off, emit, commands: Object.keys(COMMANDS) };
+  // Voer een commando uit. Is er een forward-hook die 'm opeist (bv. omdat een
+  // andere client de showcomputer is), dan gaat het commando daarheen.
+  function dispatch(cmd, args) {
+    if (!COMMANDS[cmd]) throw new Error(`Onbekend commando: ${cmd}`);
+    if (actions.forward?.(cmd, args)) {
+      emit('command', { cmd, args, forwarded: true });
+      return;
+    }
+    return dispatchLocal(cmd, args);
+  }
+
+  return { dispatch, dispatchLocal, on, off, emit, commands: Object.keys(COMMANDS) };
 }
 
 // Bouw het publieke window.cuego-object bovenop een control.

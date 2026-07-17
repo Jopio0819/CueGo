@@ -7,7 +7,23 @@
 const STATE_POLL_MS = 400; // achtergrond-check (vooral voor de looppositie)
 const PUSH_DEBOUNCE_MS = 50; // samenvoegen van een reeks wijzigingen
 
-export function connectAppLink({ dispatch, getState, on, onStatus }) {
+// Stabiel id per venster/tab. Bewust sessionStorage en niet localStorage:
+// - overleeft een refresh → we krijgen onze showcomputer-rol terug in plaats van
+//   als 'nieuwe client' te verschijnen naast onze eigen, nog hangende verbinding;
+// - is per tab → twee tabs in dezelfde browser zijn twee clients. Met localStorage
+//   zouden ze hetzelfde id delen en elkaars verbinding blijven verbreken.
+const DEVICE_ID_KEY = 'webqlab.deviceId';
+
+export function deviceId() {
+  let id = sessionStorage.getItem(DEVICE_ID_KEY);
+  if (!id) {
+    id = (crypto.randomUUID?.() || `dev-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`);
+    sessionStorage.setItem(DEVICE_ID_KEY, id);
+  }
+  return id;
+}
+
+export function connectAppLink({ dispatch, getState, on, onStatus, onShow, onDevices, onState, label }) {
   let es = null;
   let timer = null;
   let pushTimer = null;
@@ -33,7 +49,9 @@ export function connectAppLink({ dispatch, getState, on, onStatus }) {
 
   function start() {
     if (stopped) return;
-    es = new EventSource('api/events?role=app');
+    const q = new URLSearchParams({ role: 'app', deviceId: deviceId() });
+    if (label) q.set('label', label);
+    es = new EventSource(`api/events?${q}`);
 
     es.addEventListener('hello', (e) => {
       let info = {};
@@ -42,6 +60,32 @@ export function connectAppLink({ dispatch, getState, on, onStatus }) {
       isPrimary = !!info.primary;
       onStatus?.({ connected: true, primary: isPrimary });
       pushState(true); // een verse remote moet meteen de juiste lijst zien
+    });
+
+    // Wie is er verbonden en wie is de showcomputer? Bepaalt of wij zelf afspelen.
+    es.addEventListener('devices', (e) => {
+      let data;
+      try { data = JSON.parse(e.data); } catch { return; }
+      const was = isPrimary;
+      isPrimary = data.showDeviceId != null && data.showDeviceId === deviceId();
+      onDevices?.(data);
+      onStatus?.({ connected: true, primary: isPrimary });
+      if (isPrimary && !was) pushState(true); // net showcomputer geworden → bron van waarheid
+    });
+
+    // Afspeeltoestand van de showcomputer. Krijgen we alleen als wij het níét zijn:
+    // dan spelen we zelf niets af, maar tonen we wél zijn afspeelbalk en voortgang.
+    es.addEventListener('state', (e) => {
+      let data;
+      try { data = JSON.parse(e.data); } catch { return; }
+      onState?.(data);
+    });
+
+    // Een andere client heeft de gedeelde show gewijzigd.
+    es.addEventListener('show', (e) => {
+      let data;
+      try { data = JSON.parse(e.data); } catch { return; }
+      onShow?.(data);
     });
 
     // De server draagt de rol over als er elders een nieuwere tab opengaat.
@@ -96,5 +140,6 @@ export function connectAppLink({ dispatch, getState, on, onStatus }) {
   }
 
   start();
-  return { stop, pushState };
+  // appId identificeert deze tab bij de server (afzender van show-wijzigingen).
+  return { stop, pushState, appId: () => appId, isPrimary: () => isPrimary };
 }

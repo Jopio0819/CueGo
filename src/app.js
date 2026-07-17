@@ -1,10 +1,11 @@
 // app.js — UI, toetsenbord, bestanden inladen en rendering voor de cue-player.
 import { AudioEngine } from './audio-engine.js';
-import { CueList, isAudioFile } from './cue-model.js';
+import { CueList, isAudioFile, cueToMeta, metaToCue } from './cue-model.js';
+import * as showSync from './show-sync.js';
 import { saveAudio, loadAudio, deleteAudio, saveMeta, loadMeta } from './storage.js';
 import { exportProject, importProject } from './project.js';
 import { createControl, publicApi, detectServer } from './control.js';
-import { connectAppLink } from './net-remote.js';
+import { connectAppLink, deviceId } from './net-remote.js';
 import { createMidi, describeSignature, MIDI_SUPPORTED } from './midi.js';
 import { createProjectStore } from './projects-store.js';
 
@@ -113,7 +114,7 @@ function render() {
     tr.addEventListener('click', (e) => selectRow(cue.id, i, e));
     tr.addEventListener('dblclick', () => {
       selectOnly(cue.id, i);
-      playCue(cue); // dubbelklik = starten
+      control.dispatch('play', { cue: cue.id }); // dubbelklik = starten (via de bus)
     });
     // Dubbelklik op het #-vakje = nummer direct bewerken (niet starten).
     const numCell = tr.querySelector('.col-num');
@@ -123,6 +124,9 @@ function render() {
   });
 
   syncTransport();
+  // Zijn wij niet de showcomputer, dan zegt onze eigen engine niets: de rijen en
+  // de balk krijgen de toestand van de showcomputer er weer overheen.
+  if (isFollower()) applyRemotePlayback();
   emit('statechange');
 }
 
@@ -258,12 +262,17 @@ function showInspectorDuration(cue) {
 let dirty = false; // niet-opgeslagen wijzigingen sinds laatste opslaan/openen/nieuw
 const PROJECT_NAME_KEY = 'webqlab.projectName';
 let projectName = localStorage.getItem(PROJECT_NAME_KEY) || 'Naamloos';
-function persist() { saveMeta(cues.cues); dirty = true; }
+function persist() {
+  saveMeta(cues.cues); // lokale cache
+  dirty = true;
+  schedulePushShow(); // zelf-gehost: andere clients meteen bijwerken
+}
 
 function setProjectName(name) {
   projectName = (name || '').trim() || 'Naamloos';
   localStorage.setItem(PROJECT_NAME_KEY, projectName);
   updateProjectTitle();
+  schedulePushShow(); // naam hoort bij de gedeelde show (no-op zonder server)
 }
 function updateProjectTitle() {
   const el = $('projectTitle');
@@ -439,6 +448,7 @@ function deleteSelected() {
     engine.fadeOutCue(id, 0.05);
     cues.remove(id);
     deleteAudio(id).catch(() => {});
+    if (sharedShow) showSync.deleteAudio(id); // ook van de server af
   });
   selection.clear();
   if (cues.selected) selection.add(cues.selected.id);
@@ -506,7 +516,13 @@ async function playAll() {
   animateProgress();
 }
 
-function go() {
+// `a.cue` (optioneel): eerst die cue selecteren. Een andere client stuurt zijn
+// eigen selectie mee, anders zou de showcomputer zíjn cue afspelen i.p.v. de jouwe.
+function go(a) {
+  if (a?.cue) {
+    const target = resolveCue(a.cue);
+    if (target) selectOnly(target.id, cues.cues.indexOf(target));
+  }
   const cue = cues.selected;
   if (!cue) return;
   emit('go', { id: cue.id, number: cue.number, name: cue.name });
@@ -596,8 +612,10 @@ function hardStop() { engine.stopAll(); render(); }
 let lastEscAt = -1e9;
 function handleEsc() {
   const now = performance.now();
-  if (now - lastEscAt < 600) hardStop();
-  else panic();
+  // Via de bus: op een niet-showcomputer moet Esc de showcomputer stilleggen,
+  // niet alleen dit scherm.
+  if (now - lastEscAt < 600) control.dispatch('stop');
+  else control.dispatch('panic');
   lastEscAt = now;
 }
 
@@ -700,7 +718,10 @@ async function transportToggle() {
 }
 
 function bindTransportBar() {
-  playPauseBtn.addEventListener('click', transportToggle);
+  // Via de bus: op een niet-showcomputer bedient deze knop de showcomputer.
+  // (De preview-knop in de inspector blijft bewust wél lokaal — voorluisteren
+  // hoort niet de zaal in te gaan.)
+  playPauseBtn.addEventListener('click', () => control.dispatch('toggle'));
 
   seekEl.addEventListener('input', () => {
     seeking = true;
@@ -809,6 +830,13 @@ function addFiles(fileList) {
     cue.fadeIn = settings.defaultFadeIn; // standaard fades uit instellingen
     cue.fadeOut = settings.defaultFadeOut;
     saveAudio(cue.id, file).catch((err) => console.warn('Opslaan mislukt:', err));
+    // Zelf-gehost: de audio moet ook naar de server, anders zien andere clients
+    // straks wel de cue maar kunnen ze 'm niet afspelen.
+    if (sharedShow) {
+      showSync.uploadAudio(cue.id, file)
+        .then(() => schedulePushShow()) // pas melden als de audio er echt is
+        .catch((err) => console.warn('Uploaden mislukt:', file.name, err.message));
+    }
     added += 1;
   }
   if (added > 0) {
@@ -824,8 +852,11 @@ function addFiles(fileList) {
 }
 
 async function pickFolder() {
-  if (!window.showDirectoryPicker) {
-    alert('Map kiezen wordt niet ondersteund in deze browser. Gebruik Chrome/Edge, of sleep bestanden erin.');
+  // showDirectoryPicker vereist een secure context (https of localhost). Benader je
+  // CueGo via een LAN-IP, dan bestaat 'ie niet — dan pakken we de klassieke
+  // map-invoer (webkitdirectory), die ook over gewone http werkt.
+  if (!window.showDirectoryPicker || !window.isSecureContext) {
+    $('folderInput').click();
     return;
   }
   try {
@@ -853,6 +884,13 @@ function bindLoaders() {
   $('pickFolderBtn').addEventListener('click', () => { closeMenus(); pickFolder(); });
   $('pickFilesBtn').addEventListener('click', () => { closeMenus(); $('fileInput').click(); });
   $('fileInput').addEventListener('change', (e) => { addFiles(e.target.files); e.target.value = ''; });
+  // Terugval-map-invoer (zonder secure context). Levert álle bestanden uit de map
+  // en submappen; addFiles filtert de audio er zelf uit.
+  $('folderInput').addEventListener('change', (e) => {
+    const n = addFiles(e.target.files);
+    e.target.value = '';
+    if (n === 0) alert('Geen audiobestanden gevonden in die map.');
+  });
 
   let dragHideTimer = null;
   const showDrop = () => document.body.classList.add('dragging');
@@ -983,8 +1021,10 @@ const LOCKED_KEY = 'webqlab.locked'; // '1' | '0'
 let locked = false;
 
 // Elementen die bij vergrendeling worden uitgeschakeld (afspelen blijft werken).
+// Fade-tijden en loop blijven bewust wél bewerkbaar als het device vergrendeld is:
+// dat zijn de dingen die je tijdens een show nog wilt bijstellen.
 const LOCK_EDIT_IDS = [
-  'insNumber', 'insName', 'insFadeIn', 'insFadeOut', 'insFadeOutEnd', 'insVolume', 'insLoop',
+  'insNumber', 'insName', 'insFadeOutEnd', 'insVolume',
   'insLoopCount', 'insLoopCrossfade', 'insInPoint', 'insOutPoint', 'insAutoContinue', 'insAutoDelay',
   'pickFolderBtn', 'pickFilesBtn',
   'setFadeIn', 'setFadeOut', 'setSingleCue', 'setBlockKeys', 'setSaveKeybinds', 'openKeysBtn', 'openProjectBtn', 'newProjectBtn',
@@ -1138,6 +1178,7 @@ function syncSettingsForm() {
   updateLockSettingsUI();
   updateControlTab();
   updateMidiUI();
+  renderDevices();
 }
 
 // Toon de vergrendel-status en de instellen/verwijderen-knop in de instellingen.
@@ -1308,7 +1349,10 @@ async function newProject() {
   if (locked) return;
   if (!(await confirmDiscardChanges())) return;
   engine.stopAll();
-  for (const c of cues.cues) deleteAudio(c.id).catch(() => {});
+  for (const c of cues.cues) {
+    deleteAudio(c.id).catch(() => {});
+    if (sharedShow) showSync.deleteAudio(c.id); // gedeelde show: ook op de server opruimen
+  }
   cues.cues = [];
   cues.selectedIndex = -1;
   selection.clear();
@@ -1477,7 +1521,10 @@ async function openProjectFile(file) {
 
 async function loadProject(proj) {
   engine.stopAll();
-  for (const c of cues.cues) deleteAudio(c.id).catch(() => {});
+  for (const c of cues.cues) {
+    deleteAudio(c.id).catch(() => {});
+    if (sharedShow) showSync.deleteAudio(c.id); // gedeelde show: ook op de server opruimen
+  }
   cues.cues = [];
   cues.selectedIndex = -1;
   selection.clear();
@@ -1504,6 +1551,8 @@ async function loadProject(proj) {
   syncInspector();
   persist();
   dirty = false; // net geladen show is "opgeslagen"
+  // Gedeelde show: dit project wordt de show voor álle clients.
+  if (sharedShow) await uploadWholeShow();
 }
 
 function downloadBlob(blob, filename) {
@@ -1534,10 +1583,12 @@ function isTyping() {
   return false;
 }
 
+// Sneltoetsen lopen via de command-bus, niet rechtstreeks naar de functies:
+// anders slaan ze de forward-hook over en speelt een niet-showcomputer zelf af.
 function runAction(id, e) {
   switch (id) {
-    case 'go': (e && e.shiftKey) ? playAll() : go(); break;
-    case 'playPause': transportToggle(); break;
+    case 'go': control.dispatch(e && e.shiftKey ? 'playAll' : 'go'); break;
+    case 'playPause': control.dispatch('toggle'); break;
     case 'selectUp': moveSel(-1, e.shiftKey); break;
     case 'selectDown': moveSel(1, e.shiftKey); break;
     case 'selectNext': moveSel(1, false); break;
@@ -1689,7 +1740,83 @@ function apiState() {
   };
 }
 
+// --- Afspeelbalk op een niet-showcomputer ----------------------------------
+// Wij spelen dan zelf niets af, dus onze engine is leeg. De showcomputer pusht
+// zijn toestand; die tonen we hier, zodat de balk en de voortgang meelopen.
+
+let showState = null;
+
+// Zijn wij een client die meekijkt i.p.v. afspeelt?
+function isFollower() {
+  return !!(sharedShow && appLink && !appLink.isPrimary());
+}
+
+function remoteCue(id) {
+  return showState?.cues?.find((c) => c.id === id) || null;
+}
+
+// Werk de rijen en de afspeelbalk bij met de toestand van de showcomputer.
+// Bewust géén render(): dat bouwt de hele lijst opnieuw op, en dit komt een paar
+// keer per seconde binnen.
+function applyRemotePlayback() {
+  if (!showState) return;
+  for (const cue of cues.cues) {
+    const row = cueBody.querySelector(`tr[data-id="${cue.id}"]`);
+    if (!row) continue;
+    const info = remoteCue(cue.id);
+    row.classList.toggle('playing', !!info?.playing);
+    row.classList.toggle('paused', !!info?.paused);
+    const fill = row.querySelector('[data-fill]');
+    if (fill) {
+      const pct = info?.duration ? Math.min(1, info.position / info.duration) * 100 : 0;
+      fill.style.width = `${pct}%`;
+    }
+  }
+
+  // De balk volgt wat er klinkt; klinkt er niets, dan onze eigen selectie.
+  const playing = showState.cues?.find((c) => c.playing || c.paused);
+  const info = playing || remoteCue(cues.selected?.id);
+  if (!info) return;
+  tpName.textContent = info.name;
+  tpCurrent.textContent = fmtTime(info.position);
+  tpDuration.textContent = fmtTime(info.duration);
+  if (!seeking) {
+    seekEl.value = info.duration ? Math.round((info.position / info.duration) * 1000) : 0;
+    updateSeekFill();
+  }
+  setPlayIcon(!!info.playing);
+}
+
+// Commando's die geluid maken. Is een ándere client de showcomputer, dan gaan
+// deze daarheen i.p.v. hier af te spelen. (`transition` niet: die opent eerst een
+// prompt, en die hoort op het scherm te blijven waar je 'm intikt.)
+const FORWARD_CMDS = new Set(['go', 'play', 'playAll', 'stop', 'panic', 'pause', 'resume', 'toggle', 'reset']);
+
+// Geeft true als het commando is doorgestuurd (dan voeren we het hier niet uit).
+function forwardCommand(cmd, args) {
+  if (!sharedShow || !appLink || appLink.isPrimary()) return false; // wij zijn de showcomputer
+  if (!FORWARD_CMDS.has(cmd)) return false;
+
+  let payload = args;
+  if (cmd === 'go') {
+    // Stuur onze eigen selectie mee én schuif hier door, zodat beide kanten op
+    // dezelfde volgende cue uitkomen.
+    payload = { cue: cues.selected?.id ?? null };
+    cues.advance();
+    if (cues.selected) selectOnly(cues.selected.id, cues.selectedIndex);
+    render();
+    syncInspector();
+  }
+  fetch('api/command', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ cmd, args: payload }),
+  }).catch(() => console.warn('Commando naar de showcomputer sturen mislukt'));
+  return true;
+}
+
 const control = createControl({
+  forward: forwardCommand,
   go, playAll,
   play: apiPlay,
   stop: hardStop,
@@ -1948,6 +2075,106 @@ let serverInfo = null;
 let appLink = null;
 let linkConnected = false;
 
+// --- Gedeelde show (alleen zelf-gehost) -------------------------------------
+// De server is dan eigenaar van de cue-lijst en elke client toont dezelfde show.
+// Op statische hosting blijft alles lokaal, precies zoals het was.
+
+let sharedShow = false;
+let applyingRemote = false; // wijziging komt van een andere client → niet terugsturen
+let pushShowTimer = null;
+let lastPushed = '';
+
+// Wijzigingen samenvoegen: tijdens het slepen van een volume-slider is één push
+// aan het eind genoeg, geen tien per seconde.
+function schedulePushShow() {
+  if (!sharedShow || applyingRemote) return;
+  clearTimeout(pushShowTimer);
+  pushShowTimer = setTimeout(async () => {
+    const metas = cues.cues.map(cueToMeta);
+    // Naam hoort bij de show, niet bij het apparaat — anders heet dezelfde show
+    // op elke client anders.
+    const body = JSON.stringify({ name: projectName, cues: metas });
+    if (body === lastPushed) return; // niets werkelijk veranderd
+    lastPushed = body;
+    try {
+      await showSync.pushShow(appLink?.appId() ?? null, metas, projectName);
+    } catch (err) {
+      console.warn('Show synchroniseren mislukt:', err.message);
+    }
+  }, 250);
+}
+
+// Zet de show van de server neer. Bestaande cue-objecten passen we ter plekke aan
+// i.p.v. ze te vervangen: de audio-engine houdt een referentie naar het cue-object
+// van een spelende voice, en die mag niet losraken.
+async function applyShow(show) {
+  applyingRemote = true;
+  try {
+    const next = [];
+    for (const m of show.cues || []) {
+      let file = (await loadAudio(m.id)) || null; // lokale cache eerst
+      if (!file) {
+        file = await showSync.downloadAudio(m.id, m.fileName, m.fileType);
+        if (file) saveAudio(m.id, file).catch(() => {});
+      }
+      if (!file) continue; // audio (nog) niet beschikbaar → cue overslaan
+      const existing = cues.getById(m.id);
+      if (existing) {
+        Object.assign(existing, metaToCue(m, existing.file || file));
+        next.push(existing);
+      } else {
+        next.push(metaToCue(m, file));
+      }
+    }
+
+    const selectedId = cues.selected?.id;
+    cues.cues = next;
+    // Selectie zo goed mogelijk vasthouden.
+    const idx = next.findIndex((c) => c.id === selectedId);
+    cues.selectedIndex = idx !== -1 ? idx : (next.length ? 0 : -1);
+    selection.clear();
+    if (cues.selected) selection.add(cues.selected.id);
+
+    // Naam van de show overnemen (die hoort bij de show, niet bij dit apparaat).
+    if (show.name && show.name !== projectName) setProjectName(show.name);
+
+    saveMeta(cues.cues); // lokale cache bijwerken
+    lastPushed = JSON.stringify({ name: projectName, cues: cues.cues.map(cueToMeta) }); // kwam van de server
+    render();
+    // Niet de inspector verversen terwijl iemand in een veld typt — dan zou de
+    // tekst onder z'n handen verspringen.
+    if (!isTyping()) syncInspector();
+  } finally {
+    applyingRemote = false;
+  }
+}
+
+// Onze lokale show wordt de gedeelde show (server was nog leeg).
+async function uploadWholeShow() {
+  for (const c of cues.cues) {
+    try {
+      if (!(await showSync.hasAudio(c.id))) await showSync.uploadAudio(c.id, c.file);
+    } catch (err) {
+      console.warn('Uploaden mislukt:', c.name, err.message);
+    }
+  }
+  const metas = cues.cues.map(cueToMeta);
+  lastPushed = JSON.stringify({ name: projectName, cues: metas });
+  await showSync.pushShow(appLink?.appId() ?? null, metas, projectName).catch((err) => console.warn(err.message));
+}
+
+// Bij opstarten: heeft de server een show, dan wint die. Is de server leeg en
+// hebben wij cues, dan wordt onze show de gedeelde show.
+async function initSharedShow() {
+  try {
+    const show = await showSync.fetchShow();
+    if (show.cues?.length) await applyShow(show);
+    else if (cues.cues.length) await uploadWholeShow();
+  } catch (err) {
+    console.warn('Gedeelde show laden mislukt:', err.message);
+  }
+}
+
 async function initServerDetection() {
   serverInfo = await detectServer();
   document.body.classList.toggle('has-server', !!serverInfo);
@@ -1957,14 +2184,101 @@ async function initServerDetection() {
   renderRecentProjects();
   // Lokaal? Dan luisteren naar commando's van remotes en onze toestand terugsturen.
   if (serverInfo) {
+    sharedShow = true; // de server is nu eigenaar van de cue-lijst
     appLink = connectAppLink({
-      dispatch: control.dispatch,
+      // dispatchLocal: dit komt al van de server, dus hier uitvoeren en niet
+      // opnieuw doorsturen (dat zou een lus geven).
+      dispatch: control.dispatchLocal,
       getState: apiState,
       on: control.on, // pusht de toestand pas ná een render (niet halverwege een async dispatch)
       onStatus: ({ connected }) => { linkConnected = connected; updateControlTab(); },
+      onShow: (show) => { applyShow(show); }, // andere client wijzigde de show
+      onState: (st) => { showState = st; applyRemotePlayback(); }, // afspeelbalk volgt de showcomputer
+      label: deviceLabel(), // gaat meteen mee bij het verbinden
+      onDevices: (info) => {
+        devicesInfo = info;
+        document.body.classList.toggle('is-showcomputer', info.showDeviceId === deviceId());
+        renderDevices();
+      },
     });
+    await initSharedShow();
   }
   updateControlTab();
+}
+
+// --- Multi-device: wie is de showcomputer? ---------------------------------
+
+const DEVICE_LABEL_KEY = 'webqlab.deviceLabel';
+let devicesInfo = { showDeviceId: null, you: null, devices: [] };
+
+function deviceLabel() {
+  return localStorage.getItem(DEVICE_LABEL_KEY) || '';
+}
+
+// Onze naam doorgeven zodat je de apparaten in de lijst uit elkaar houdt.
+async function sendDeviceLabel(label) {
+  await fetch('api/devices', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ deviceId: deviceId(), label }),
+  }).catch(() => {});
+}
+
+async function claimShowComputer(id) {
+  await fetch('api/devices', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ showDeviceId: id }),
+  }).catch(() => {});
+}
+
+function renderDevices() {
+  const list = $('deviceList');
+  if (!list) return;
+  const input = $('setDeviceLabel');
+  if (input && document.activeElement !== input) input.value = deviceLabel();
+
+  list.innerHTML = '';
+  if (!devicesInfo.devices.length) {
+    const p = document.createElement('p');
+    p.className = 'settings-note';
+    p.textContent = 'Nog geen apparaten verbonden.';
+    list.appendChild(p);
+    return;
+  }
+
+  for (const d of devicesInfo.devices) {
+    const row = document.createElement('div');
+    row.className = 'device-row' + (d.isShow ? ' is-show' : '');
+
+    const name = document.createElement('span');
+    name.className = 'device-name';
+    name.textContent = d.label + (d.deviceId === deviceId() ? ' (dit apparaat)' : '');
+
+    const tag = document.createElement('span');
+    tag.className = 'device-tag';
+    tag.textContent = d.isShow ? '🔊 showcomputer' : '';
+
+    row.append(name, tag);
+    if (!d.isShow) {
+      const btn = document.createElement('button');
+      btn.className = 'btn kb-clear';
+      btn.textContent = 'Maak showcomputer';
+      btn.addEventListener('click', () => claimShowComputer(d.deviceId));
+      row.appendChild(btn);
+    }
+    list.appendChild(row);
+  }
+}
+
+function bindDevices() {
+  const input = $('setDeviceLabel');
+  if (!input) return;
+  input.addEventListener('change', (e) => {
+    const label = e.target.value.trim();
+    localStorage.setItem(DEVICE_LABEL_KEY, label);
+    sendDeviceLabel(label);
+  });
 }
 
 // Toon in het Besturing-tabblad of de server-afhankelijke opties beschikbaar zijn.
@@ -2100,32 +2414,32 @@ function bindInspectorResize() {
 
 // --- Inspector: inklapbare secties ------------------------------------------
 
-const INS_SECTIONS_KEY = 'webqlab.inspectorSections.v1';
+// Accordeon: er staat er één open. Klap je een andere open, dan gaat de vorige
+// dicht — zo blijft de inspector overzichtelijk zonder te scrollen.
+const INS_OPEN_KEY = 'webqlab.inspectorOpen.v1';
 
-function loadInsSections() {
-  try { return JSON.parse(localStorage.getItem(INS_SECTIONS_KEY)) || {}; } catch { return {}; }
+function loadInsOpen() {
+  const v = localStorage.getItem(INS_OPEN_KEY);
+  return v === null ? 'general' : v; // standaard: Algemeen ('' = alles dicht)
 }
-function saveInsSections(state) {
-  try { localStorage.setItem(INS_SECTIONS_KEY, JSON.stringify(state)); } catch { /* negeer */ }
+function saveInsOpen(id) {
+  try { localStorage.setItem(INS_OPEN_KEY, id || ''); } catch { /* negeer */ }
 }
 
-// Standaard staat alleen 'Algemeen' open; de rest klap je open als je 'm nodig hebt.
-const INS_OPEN_BY_DEFAULT = new Set(['general']);
+function setOpenSection(id) {
+  for (const s of document.querySelectorAll('.ins-section')) {
+    s.classList.toggle('collapsed', s.dataset.section !== id);
+  }
+  saveInsOpen(id);
+}
 
 function bindInspectorSections() {
-  const state = loadInsSections();
+  setOpenSection(loadInsOpen());
   for (const section of document.querySelectorAll('.ins-section')) {
-    const id = section.dataset.section;
-    // Eerder gekozen? Die keuze wint. Nog nooit aangeraakt → standaard dicht.
-    const collapsed = state[id] ?? !INS_OPEN_BY_DEFAULT.has(id);
-    section.classList.toggle('collapsed', collapsed);
-
-    const head = section.querySelector('.ins-head');
-    head.addEventListener('click', () => {
-      const nowCollapsed = section.classList.toggle('collapsed');
-      const s = loadInsSections();
-      s[id] = nowCollapsed;
-      saveInsSections(s);
+    section.querySelector('.ins-head').addEventListener('click', () => {
+      // Nogmaals op de open sectie klikken = dichtklappen (dan staat alles dicht).
+      const isOpen = !section.classList.contains('collapsed');
+      setOpenSection(isOpen ? '' : section.dataset.section);
     });
   }
 }
@@ -2146,24 +2460,7 @@ async function restoreFromStorage() {
   for (const m of meta) {
     const file = await loadAudio(m.id);
     if (!file) continue;
-    cues.addExisting({
-      id: m.id,
-      number: m.number ?? '',
-      name: m.name ?? file.name.replace(/\.[^.]+$/, ''),
-      file,
-      fadeIn: m.fadeIn ?? 0,
-      fadeOut: m.fadeOut ?? 3,
-      fadeOutAtEnd: !!m.fadeOutAtEnd,
-      volume: m.volume ?? 1,
-      loop: !!m.loop,
-      loopCount: m.loopCount || '',
-      loopCrossfade: m.loopCrossfade || 0,
-      inPoint: m.inPoint || 0,
-      outPoint: m.outPoint || '',
-      autoContinue: !!m.autoContinue,
-      autoContinueDelay: m.autoContinueDelay ?? 1,
-      midiTrigger: m.midiTrigger || '',
-    });
+    cues.addExisting(metaToCue(m, file));
   }
   if (cues.cues.length) selectOnly(cues.cues[0].id, 0);
   render();
@@ -2178,6 +2475,7 @@ bindMenus();
 bindInspector();
 bindSettings();
 bindMidiSettings();
+bindDevices();
 bindCueMidi();
 bindSwitchBlur();
 bindProjectTitle();
@@ -2191,6 +2489,12 @@ applyLockState();
 updateProjectTitle();
 render();
 syncInspector();
-restoreFromStorage();
-initServerDetection();
-initMidi();
+
+// Volgorde is van belang: eerst de lokale show terug, dan pas de server-detectie.
+// initSharedShow() moet weten of we al cues hebben — is de server leeg, dan wordt
+// onze show de gedeelde show; heeft de server er een, dan wint die.
+(async () => {
+  await restoreFromStorage();
+  await initServerDetection();
+  initMidi();
+})();

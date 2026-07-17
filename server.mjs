@@ -104,17 +104,17 @@ async function loadShow() {
   try {
     const data = JSON.parse(await readFile(SHOW_FILE, 'utf8'));
     showRev = data.rev || 0;
-    return { rev: showRev, cues: data.cues || [], updatedAt: data.updatedAt || 0 };
+    return { rev: showRev, name: data.name || '', cues: data.cues || [], updatedAt: data.updatedAt || 0 };
   } catch {
-    return { rev: showRev, cues: [], updatedAt: 0 }; // nog geen show
+    return { rev: showRev, name: '', cues: [], updatedAt: 0 }; // nog geen show
   }
 }
 
 // Schrijf de show weg en vertel de andere clients ervan. De afzender slaan we
 // over: die heeft de wijziging zelf al doorgevoerd.
-async function saveShow(cues, senderId) {
+async function saveShow(cues, senderId, name) {
   showRev += 1;
-  const data = { rev: showRev, cues, updatedAt: Date.now() };
+  const data = { rev: showRev, name: name || '', cues, updatedAt: Date.now() };
   await mkdir(SHOW_DIR, { recursive: true });
   await writeFile(SHOW_FILE, JSON.stringify(data));
   for (const c of clients) {
@@ -131,19 +131,49 @@ function safeCueId(raw) {
 
 // --- Besturings-relay -------------------------------------------------------
 
-const clients = new Set(); // { res, role: 'app' | 'remote', appId? }
-let lastState = null; // laatst bekende toestand van de actieve app
-// Er kan maar één actieve app zijn. Met twee open tabs zouden ze allebei hun
-// toestand pushen (remote flikkert heen en weer) én allebei audio afspelen op GO.
-// De nieuwste tab wint; oudere tabs worden 'passief'.
+const clients = new Set(); // { res, role: 'app' | 'remote', appId?, deviceId?, label? }
+let lastState = null; // laatst bekende toestand van de showcomputer
+// Eén client is de showcomputer: díe speelt het geluid af en krijgt de commando's
+// van remotes en van de andere clients. Zonder dit zou elke open tab meespelen.
+//
+// We houden dat bij per APPARAAT (deviceId uit localStorage), niet per verbinding:
+// bij een refresh krijg je anders een nieuwe verbinding terwijl de oude nog even
+// blijft hangen — dan zou je showcomputer een spook worden en GO nergens landen.
 let appSeq = 0;
-let primaryAppId = null;
+let primaryDeviceId = null;
 
 function appClients() {
   return [...clients].filter((c) => c.role === 'app');
 }
 function primaryApp() {
-  return appClients().find((c) => c.appId === primaryAppId) || null;
+  return appClients().find((c) => c.deviceId === primaryDeviceId) || null;
+}
+
+// Wie zijn er verbonden, en wie speelt het geluid af?
+function deviceList() {
+  return appClients()
+    .sort((a, b) => a.appId - b.appId)
+    .map((c) => ({
+      deviceId: c.deviceId,
+      label: c.label || `Client ${c.appId}`,
+      isShow: c.deviceId === primaryDeviceId,
+    }));
+}
+
+// Vertel alle clients wie de showcomputer is (en welke apparaten er zijn).
+function broadcastDevices() {
+  const devices = deviceList();
+  for (const c of appClients()) {
+    sseSend(c, 'devices', { showDeviceId: primaryDeviceId, you: c.deviceId, devices });
+  }
+}
+
+function setShowComputer(deviceId) {
+  if (!appClients().some((c) => c.deviceId === deviceId)) return false;
+  primaryDeviceId = deviceId;
+  lastState = null; // toestand van de vórige showcomputer is niet meer geldig
+  broadcastDevices();
+  return true;
 }
 
 function sseSend(client, event, data) {
@@ -210,7 +240,7 @@ function lanIps() {
   return out;
 }
 
-function openSse(req, res, role) {
+function openSse(req, res, role, deviceId, label) {
   res.writeHead(200, {
     'Content-Type': 'text/event-stream; charset=utf-8',
     'Cache-Control': 'no-store',
@@ -218,15 +248,34 @@ function openSse(req, res, role) {
     'X-Accel-Buffering': 'no',
   });
   const client = { res, role };
-  if (role === 'app') client.appId = ++appSeq;
+  if (role === 'app') {
+    client.appId = ++appSeq;
+    client.deviceId = deviceId;
+    if (label) client.label = String(label).slice(0, 60);
+
+    // Zelfde apparaat, nieuwe verbinding = een refresh. De oude verbinding is dood
+    // maar hangt nog even; die gooien we er meteen uit.
+    for (const old of appClients()) {
+      if (old.deviceId === client.deviceId) {
+        try { old.res.end(); } catch { /* al dicht */ }
+        clients.delete(old);
+      }
+    }
+  }
   clients.add(client);
 
   if (role === 'app') {
-    // Nieuwste tab wordt de actieve; een eventuele vorige gaat passief.
-    const prev = primaryApp();
-    primaryAppId = client.appId;
-    if (prev && prev !== client) sseSend(prev, 'primary', { primary: false });
-    sseSend(client, 'hello', { role, token: !!TOKEN, appId: client.appId, primary: true });
+    // Eerste apparaat wordt de showcomputer. Komt er later een bij, dan verandert
+    // er niets — anders zou een tweede laptop stilletjes het geluid overnemen.
+    if (!primaryApp()) primaryDeviceId = client.deviceId;
+    sseSend(client, 'hello', {
+      role, token: !!TOKEN, appId: client.appId, deviceId: client.deviceId,
+      primary: client.deviceId === primaryDeviceId,
+    });
+    // Meekijkende client: meteen de huidige afspeeltoestand, anders staat z'n
+    // balk leeg tot de showcomputer de volgende keer pusht.
+    if (lastState && client.deviceId !== primaryDeviceId) sseSend(client, 'state', lastState);
+    broadcastDevices();
   } else {
     sseSend(client, 'hello', { role, token: !!TOKEN, appOnline: !!primaryApp() });
     // Een nieuwe remote krijgt meteen de laatst bekende toestand — maar alleen als de
@@ -243,17 +292,21 @@ function openSse(req, res, role) {
     clearInterval(beat);
     clients.delete(client);
     if (role !== 'app') return;
-    if (client.appId !== primaryAppId) return; // passieve tab weg → verandert niets
+    // Verving een nieuwere verbinding van hetzelfde apparaat ons al? Dan niets doen.
+    if (appClients().some((c) => c.deviceId === client.deviceId)) return;
+    if (client.deviceId !== primaryDeviceId) { broadcastDevices(); return; } // gewone client weg
 
-    // De actieve app is weg: draag over aan de nieuwste overgebleven tab.
-    const next = appClients().sort((a, b) => b.appId - a.appId)[0];
+    // De showcomputer is weg: draag over aan de oudste overgebleven client, zodat
+    // de remote niet dood staat. Je kunt 'm daarna handmatig omzetten.
+    const next = appClients().sort((a, b) => a.appId - b.appId)[0];
     if (next) {
-      primaryAppId = next.appId;
-      sseSend(next, 'primary', { primary: true });
+      primaryDeviceId = next.deviceId;
+      lastState = null;
+      broadcastDevices();
       return;
     }
     // Geen app meer: bewaarde toestand is niet langer 'live'.
-    primaryAppId = null;
+    primaryDeviceId = null;
     lastState = null;
     broadcast('remote', 'state', { offline: true, projectName: '', cues: [] });
   };
@@ -278,14 +331,36 @@ const server = createServer(async (req, res) => {
       return;
     }
 
+    // Multi-device: wie is de showcomputer, en hoe heten de apparaten?
+    if (urlPath === '/api/devices') {
+      if (req.method === 'GET') { json(res, 200, { showDeviceId: primaryDeviceId, devices: deviceList() }); return; }
+      if (req.method !== 'POST' && req.method !== 'PUT') { json(res, 405, { error: 'Gebruik GET of POST' }); return; }
+      if (!tokenOk(url)) { json(res, 401, { error: 'Ongeldig token' }); return; }
+      const body = await readJson(req).catch(() => null);
+      if (!body) { json(res, 400, { error: 'Ongeldige JSON' }); return; }
+
+      // Apparaatnaam zetten (zodat je ze in de lijst uit elkaar houdt).
+      if (body.label != null && body.deviceId != null) {
+        for (const c of appClients()) if (c.deviceId === body.deviceId) c.label = String(body.label).slice(0, 60);
+      }
+      // Showcomputer aanwijzen.
+      if (body.showDeviceId != null && !setShowComputer(body.showDeviceId)) {
+        json(res, 404, { error: 'Dat apparaat is niet (meer) verbonden' });
+        return;
+      }
+      broadcastDevices();
+      json(res, 200, { ok: true, showDeviceId: primaryDeviceId, devices: deviceList() });
+      return;
+    }
+
     // Gedeelde show: alle clients lezen en schrijven dezelfde cue-lijst.
     if (urlPath === '/api/show') {
       if (req.method === 'GET') { json(res, 200, await loadShow()); return; }
       if (req.method === 'PUT' || req.method === 'POST') {
         if (!tokenOk(url)) { json(res, 401, { error: 'Ongeldig token' }); return; }
         const body = await readJson(req, 5e7).catch(() => null);
-        if (!body || !Array.isArray(body.cues)) { json(res, 400, { error: 'Verwacht { appId, cues }' }); return; }
-        const data = await saveShow(body.cues, body.appId);
+        if (!body || !Array.isArray(body.cues)) { json(res, 400, { error: 'Verwacht { appId, cues, name }' }); return; }
+        const data = await saveShow(body.cues, body.appId, body.name);
         json(res, 200, { ok: true, rev: data.rev });
         return;
       }
@@ -363,7 +438,12 @@ const server = createServer(async (req, res) => {
     if (urlPath === '/api/events') {
       if (!tokenOk(url)) { json(res, 401, { error: 'Ongeldig token' }); return; }
       const role = url.searchParams.get('role') === 'app' ? 'app' : 'remote';
-      openSse(req, res, role);
+      const dev = url.searchParams.get('deviceId');
+      // Een app moet zich identificeren. Zonder id kunnen we een refresh niet van
+      // een nieuw apparaat onderscheiden, en zou zo'n naamloze (mogelijk dode)
+      // verbinding de showcomputer-rol kunnen claimen.
+      if (role === 'app' && !dev) { json(res, 400, { error: 'deviceId ontbreekt' }); return; }
+      openSse(req, res, role, dev, url.searchParams.get('label'));
       return;
     }
 
@@ -392,6 +472,11 @@ const server = createServer(async (req, res) => {
       if (body.appId !== primaryAppId) { json(res, 200, { ok: true, ignored: 'niet de actieve app' }); return; }
       lastState = body.state;
       broadcast('remote', 'state', lastState);
+      // Ook naar de andere clients: die spelen zelf niets af, maar moeten wél de
+      // afspeelbalk en de spelende cue van de showcomputer kunnen tonen.
+      for (const c of appClients()) {
+        if (c.deviceId !== primaryDeviceId) sseSend(c, 'state', lastState);
+      }
       json(res, 200, { ok: true, remotes: countRole('remote') });
       return;
     }

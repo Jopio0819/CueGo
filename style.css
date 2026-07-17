@@ -603,6 +603,18 @@ body.dragging .drop-overlay { display: flex; }
 .recent-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
 .recent-meta { color: var(--faint); font-size: 11px; flex: none; }
 
+/* Multi-device: verbonden clients + wie het geluid afspeelt */
+.device-list { display: flex; flex-direction: column; gap: 6px; margin: 8px 0 14px; }
+.device-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 12px; border-radius: 9px;
+  background: var(--panel-2); border: 1px solid var(--line);
+  font-size: 13px;
+}
+.device-row.is-show { border-color: var(--play, #35c88f); }
+.device-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.device-tag { color: var(--play, #35c88f); font-size: 11px; flex: none; }
+
 .remote-urls { display: flex; flex-direction: column; gap: 6px; margin: 8px 0 10px; }
 .remote-url {
   padding: 9px 12px; border-radius: 8px; border: 1px solid var(--line);

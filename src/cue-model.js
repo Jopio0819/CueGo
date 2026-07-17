@@ -48,6 +48,52 @@ export function createCue(file) {
   };
 }
 
+// Cue → platte metadata (voor opslag en voor de gedeelde show op de server).
+// fileName/fileType gaan mee zodat een andere client het bestand kan herbouwen.
+export function cueToMeta(c) {
+  return {
+    id: c.id,
+    number: c.number || '',
+    name: c.name,
+    fadeIn: c.fadeIn,
+    fadeOut: c.fadeOut,
+    fadeOutAtEnd: !!c.fadeOutAtEnd,
+    volume: c.volume,
+    loop: !!c.loop,
+    loopCount: c.loopCount || '',
+    loopCrossfade: c.loopCrossfade || 0,
+    inPoint: c.inPoint || 0,
+    outPoint: c.outPoint || '',
+    autoContinue: !!c.autoContinue,
+    autoContinueDelay: c.autoContinueDelay ?? 1,
+    midiTrigger: c.midiTrigger || '',
+    fileName: c.file?.name || '',
+    fileType: c.file?.type || '',
+  };
+}
+
+// Platte metadata + audiobestand → cue. Ontbrekende velden krijgen hun default.
+export function metaToCue(m, file) {
+  return {
+    id: m.id,
+    number: m.number ?? '',
+    name: m.name ?? (file?.name || '').replace(/\.[^.]+$/, ''),
+    file,
+    fadeIn: m.fadeIn ?? 0,
+    fadeOut: m.fadeOut ?? 3,
+    fadeOutAtEnd: !!m.fadeOutAtEnd,
+    volume: m.volume ?? 1,
+    loop: !!m.loop,
+    loopCount: m.loopCount || '',
+    loopCrossfade: m.loopCrossfade || 0,
+    inPoint: m.inPoint || 0,
+    outPoint: m.outPoint || '',
+    autoContinue: !!m.autoContinue,
+    autoContinueDelay: m.autoContinueDelay ?? 1,
+    midiTrigger: m.midiTrigger || '',
+  };
+}
+
 export class CueList {
   constructor() {
     this.cues = [];
