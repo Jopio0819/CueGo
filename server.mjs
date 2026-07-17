@@ -573,9 +573,18 @@ function openSse(req, res, role, deviceId, label) {
   clients.add(client);
 
   if (role === 'app') {
-    // Nog géén showcomputer-rol: die krijg je pas bij je eerste levensteken
-    // (zie touchDevice). Verbonden zijn zegt niets — een bevroren tab herverbindt
-    // ook, en die mag de rol niet kapen.
+    // Is er nog geen levende showcomputer? Dan telt verbinden meteen als
+    // levensteken en wordt deze tab de showcomputer — anders zou je na een
+    // (her)start van de server eerst een hartslag moeten afwachten (tot 8s, op de
+    // achtergrond langer) voor je iets kunt afspelen. Een écht bevroren pagina kan
+    // geen nieuwe verbinding openen, dus verbinden bewíjst leven. We kapen nooit
+    // een rol die al bij een levende client ligt: resolvePrimary laat die met rust
+    // (en een gekozen apparaat pakt 'm bij z'n eerste hartslag alsnog terug).
+    if (!primaryApp()) {
+      client.alive = true;
+      client.lastSeen = Date.now();
+      resolvePrimary();
+    }
     sseSend(client, 'hello', {
       role, appId: client.appId, deviceId: client.deviceId,
       primary: client.deviceId === primaryDeviceId,
