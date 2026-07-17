@@ -1854,11 +1854,23 @@ function remotePos(info) {
   const basis = info.position || 0;
   if (!info.playing) { smoothPos.delete(info.id); return basis; } // gepauzeerd/stil → bevriezen
   const nu = performance.now();
-  const doel = basis + (nu - showStateAt) / 1000; // waar de showcomputer nú zit
-  const klem = (p) => (info.duration ? Math.min(p, info.duration) : p);
+  let doel = basis + (nu - showStateAt) / 1000; // waar de showcomputer nú zit
+  const dur = info.duration || 0;
+
+  // Zelf vooruit gokken op wat de cue gaat doen. Een loopende cue wikkelt aan
+  // het einde terug naar het begin — dat weet deze client uit z'n eigen
+  // cue-lijst, dus daar hoeft hij niet op een push te wachten. Zonder dit
+  // plakt de balk elke ronde even op 100%. Zit de gok er een fractie naast,
+  // dan corrigeert de volgende push dat toch.
+  const cue = cues.getById(info.id);
+  if (dur > 0 && cue?.loop) doel = doel % dur;
+
+  const klem = (p) => (dur ? Math.min(p, dur) : p);
 
   const s = smoothPos.get(info.id);
-  if (!s || Math.abs(doel - s.pos) > 0.75) {
+  // Een loop-wikkel ís een sprong terug — direct overnemen, net als een seek.
+  const gewikkeld = cue?.loop && s && doel < s.pos - 0.05;
+  if (!s || gewikkeld || Math.abs(doel - s.pos) > 0.75) {
     // Eerste meting, of een echte sprong → direct overnemen.
     smoothPos.set(info.id, { pos: doel, at: nu });
     return klem(doel);
