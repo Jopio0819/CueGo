@@ -68,6 +68,11 @@
           </thead>
           <tbody id="cueBody"></tbody>
         </table>
+        <!-- Zichtbaar terwijl een andere instance de audio van de gedeelde show binnenhaalt -->
+        <div id="cueLoading" class="cue-loading" hidden>
+          <div class="spinner"></div>
+          <span id="cueLoadingText">Cues laden…</span>
+        </div>
         <div id="dropLine" class="drop-line" hidden></div>
         <div id="dropHint" class="drop-hint">
           <div class="drop-hint-icon">♪</div>

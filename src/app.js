@@ -2260,6 +2260,21 @@ function schedulePushShow() {
 // van een spelende voice, en die mag niet losraken.
 async function applyShow(show) {
   applyingRemote = true;
+
+  // Laad-icoontje zolang de audio van de cues binnenkomt. Pas na 250ms tonen:
+  // staat alles al in de lokale cache, dan is 't klaar vóór iemand iets ziet.
+  const total = (show.cues || []).length;
+  let loaded = 0;
+  const loadingEl = $('cueLoading');
+  const loadingText = $('cueLoadingText');
+  const setProgress = () => { if (loadingText) loadingText.textContent = `Cues laden… (${loaded}/${total})`; };
+  const showLoaderTimer = setTimeout(() => {
+    if (!loadingEl) return;
+    setProgress();
+    loadingEl.hidden = false;
+    cueListWrap.classList.add('loading');
+  }, 250);
+
   try {
     const next = [];
     for (const m of show.cues || []) {
@@ -2268,6 +2283,8 @@ async function applyShow(show) {
         file = await showSync.downloadAudio(m.id, m.fileName, m.fileType);
         if (file) saveAudio(m.id, file).catch(() => {});
       }
+      loaded += 1;
+      setProgress();
       if (!file) continue; // audio (nog) niet beschikbaar → cue overslaan
       const existing = cues.getById(m.id);
       if (existing) {
@@ -2296,6 +2313,9 @@ async function applyShow(show) {
     // tekst onder z'n handen verspringen.
     if (!isTyping()) syncInspector();
   } finally {
+    clearTimeout(showLoaderTimer);
+    if (loadingEl) loadingEl.hidden = true;
+    cueListWrap.classList.remove('loading');
     applyingRemote = false;
   }
 }
