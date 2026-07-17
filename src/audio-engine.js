@@ -5,6 +5,36 @@
 // dat AudioBufferSourceNode zelf geen pauze/seek kent (we stoppen en herstarten
 // met een offset).
 
+// 6-bands equalizer per cue. Shelves aan de uiteinden, peaking ertussen;
+// gain per band in dB (±12), 0 = neutraal.
+export const EQ_BANDS = [
+  { f: 60, type: 'lowshelf', label: '60' },
+  { f: 150, type: 'peaking', label: '150' },
+  { f: 400, type: 'peaking', label: '400' },
+  { f: 1000, type: 'peaking', label: '1k' },
+  { f: 3000, type: 'peaking', label: '3k' },
+  { f: 12000, type: 'highshelf', label: '12k' },
+];
+export const EQ_MAX_DB = 12;
+
+const clampDb = (v) => Math.max(-EQ_MAX_DB, Math.min(EQ_MAX_DB, Number(v) || 0));
+
+// Bouw de filterketen voor één voice. Ook een vlakke EQ krijgt z'n filters
+// (0 dB is neutraal): dan kun je live draaien terwijl de cue speelt, zonder
+// de audiograaf te hoeven herbedraden.
+function buildEqChain(ctx, eq) {
+  const filters = EQ_BANDS.map((band, i) => {
+    const f = ctx.createBiquadFilter();
+    f.type = band.type;
+    f.frequency.value = band.f;
+    if (band.type === 'peaking') f.Q.value = 1;
+    f.gain.value = clampDb(eq?.[i]);
+    return f;
+  });
+  for (let i = 0; i < filters.length - 1; i++) filters[i].connect(filters[i + 1]);
+  return filters;
+}
+
 export class AudioEngine {
   constructor() {
     this.ctx = null;
@@ -82,7 +112,11 @@ export class AudioEngine {
     this._discard(cue.id); // verwijder bestaande voice zonder callback
 
     const gain = ctx.createGain();
-    gain.connect(this.masterGain);
+    // Alles van deze cue (ook loops, crossfades en preview) loopt door de
+    // EQ-keten: gain → 6 filters → master.
+    const eqFilters = buildEqChain(ctx, cue.eq);
+    gain.connect(eqFilters[0]);
+    eqFilters[eqFilters.length - 1].connect(this.masterGain);
 
     const now = ctx.currentTime;
     const target = clamp01(cue.volume ?? 1);
@@ -116,7 +150,7 @@ export class AudioEngine {
       }
     }
     const voice = {
-      cueId: cue.id, cue, source: null, sources: null, schedulerTimer: null, gain, buffer,
+      cueId: cue.id, cue, source: null, sources: null, schedulerTimer: null, gain, eqFilters, buffer,
       startedAt: now, offset: clampedOffset,
       paused: false, ended: false, fading: false,
       onEnded, playsLeft: plays, infinite, crossfade: xf,
@@ -223,6 +257,15 @@ export class AudioEngine {
     if (voice.infinite) source.start(ctx.currentTime, absStart);
     else source.start(ctx.currentTime, absStart, remaining);
   }
+// Pas de EQ van een spélende cue direct toe (klein glijmoment tegen klikken).
+// Geen voice? Dan is er niets te doen — de keten wordt bij play() opgebouwd.
+updateEq(cueId, eq) {
+  const v = this.voices.get(cueId);
+  if (!v?.eqFilters) return;
+  const now = this.ctx.currentTime;
+  v.eqFilters.forEach((f, i) => f.gain.setTargetAtTime(clampDb(eq?.[i]), now, 0.03));
+}
+
 async setSinkId(deviceId) {
   this.sinkId = deviceId;
   const ctx = this.ctx;

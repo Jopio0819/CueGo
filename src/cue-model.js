@@ -45,6 +45,7 @@ export function createCue(file) {
     autoContinue: false, // na afloop automatisch de volgende cue starten
     autoContinueDelay: 1, // wachttijd (s) voor auto-doorgaan
     midiTrigger: '', // MIDI-handtekening die deze cue start (bv. 'note:0:60'); leeg = geen
+    eq: [0, 0, 0, 0, 0, 0], // 6-bands equalizer, gain per band in dB (0 = vlak)
   };
 }
 
@@ -67,6 +68,7 @@ export function cueToMeta(c) {
     autoContinue: !!c.autoContinue,
     autoContinueDelay: c.autoContinueDelay ?? 1,
     midiTrigger: c.midiTrigger || '',
+    eq: Array.isArray(c.eq) ? c.eq.slice(0, 6).map(Number) : [0, 0, 0, 0, 0, 0],
     fileName: c.file?.name || '',
     fileType: c.file?.type || '',
   };
@@ -91,6 +93,7 @@ export function metaToCue(m, file) {
     autoContinue: !!m.autoContinue,
     autoContinueDelay: m.autoContinueDelay ?? 1,
     midiTrigger: m.midiTrigger || '',
+    eq: Array.isArray(m.eq) && m.eq.length === 6 ? m.eq.map(Number) : [0, 0, 0, 0, 0, 0],
   };
 }
 

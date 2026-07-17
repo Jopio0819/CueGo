@@ -662,6 +662,75 @@ body.dragging .drop-overlay { display: flex; }
 .recent-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
 .recent-meta { color: var(--faint); font-size: 11px; flex: none; }
 
+/* ---------- Equalizer (fullscreen popup) ---------- */
+.eq-card {
+  width: min(1100px, calc(100vw - 32px));
+  height: min(720px, calc(100vh - 32px));
+  display: flex;
+  flex-direction: column;
+}
+.eq-bands {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 12px;
+  padding: 10px 28px 6px;
+}
+.eq-band {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  min-height: 0;
+}
+.eq-db {
+  font-variant-numeric: tabular-nums;
+  font-size: 14px;
+  color: var(--muted);
+  min-height: 20px;
+}
+.eq-band.actief .eq-db { color: var(--accent); font-weight: 600; }
+/* Verticale schuif: gedraaide range in een vaste kolom, schaalt mee met de kaart */
+.eq-slider-wrap {
+  flex: 1;
+  min-height: 0;
+  width: 44px;
+  position: relative;
+}
+.eq-slider-wrap input[type="range"] {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: var(--eq-h, 320px); /* = hoogte van de wrap; zet JS bij het openen */
+  transform: translate(-50%, -50%) rotate(-90deg);
+  margin: 0;
+}
+.eq-freq {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+.eq-freq em { display: block; font-style: normal; font-size: 10.5px; color: var(--faint); }
+.eq-actions {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 12px 28px 18px;
+  border-top: 1px solid var(--line);
+}
+.eq-actions .settings-note { margin: 0; }
+/* Nullijn-gevoel: streepje in het midden van elke kolom */
+.eq-slider-wrap::before {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 4px;
+  right: 4px;
+  border-top: 1px dashed var(--line-strong);
+  pointer-events: none;
+}
+
 /* Korte melding rechtsonder (bv. een commando dat de showcomputer niet haalde) */
 .toast {
   position: fixed;

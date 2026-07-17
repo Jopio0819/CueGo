@@ -1,5 +1,5 @@
 // app.js — UI, toetsenbord, bestanden inladen en rendering voor de cue-player.
-import { AudioEngine } from './audio-engine.js';
+import { AudioEngine, EQ_BANDS, EQ_MAX_DB } from './audio-engine.js';
 import { CueList, isAudioFile, cueToMeta, metaToCue } from './cue-model.js';
 import * as showSync from './show-sync.js';
 import { saveAudio, loadAudio, deleteAudio, saveMeta, loadMeta } from './storage.js';
@@ -242,6 +242,7 @@ function syncInspector() {
   $('autoContinueField').hidden = !cue.autoContinue;
   showInspectorDuration(cue);
   syncCueMidi();
+  syncEqStatus();
   syncPreviewBar();
 }
 
@@ -820,6 +821,121 @@ function bindPreviewBar() {
   });
 }
 
+// --- Equalizer (fullscreen popup) ------------------------------------------
+
+// Oudere cues (van vóór de EQ) hebben het veld nog niet.
+function ensureEq(c) {
+  if (!Array.isArray(c.eq) || c.eq.length !== EQ_BANDS.length) c.eq = EQ_BANDS.map(() => 0);
+  return c.eq;
+}
+
+function eqIsVlak(c) {
+  return !c?.eq || c.eq.every((v) => !v);
+}
+
+// Klein statusje naast de knop in de inspector.
+function syncEqStatus() {
+  const el = $('eqStatus');
+  if (el) el.textContent = eqIsVlak(cues.selected) ? '(vlak)' : '(aangepast)';
+}
+
+function fmtDb(v) {
+  if (!v) return '0';
+  return (v > 0 ? '+' : '−') + Math.abs(v).toFixed(1).replace(/\.0$/, '');
+}
+
+// Bouw de zes kolommen één keer.
+function buildEqUi() {
+  const wrap = $('eqBands');
+  if (!wrap || wrap.childElementCount) return;
+  EQ_BANDS.forEach((band, i) => {
+    const col = document.createElement('div');
+    col.className = 'eq-band';
+
+    const db = document.createElement('span');
+    db.className = 'eq-db';
+
+    const sliderWrap = document.createElement('div');
+    sliderWrap.className = 'eq-slider-wrap';
+    const input = document.createElement('input');
+    input.type = 'range';
+    input.min = String(-EQ_MAX_DB);
+    input.max = String(EQ_MAX_DB);
+    input.step = '0.5';
+    input.value = '0';
+    input.dataset.band = String(i);
+    sliderWrap.appendChild(input);
+
+    const freq = document.createElement('span');
+    freq.className = 'eq-freq';
+    freq.textContent = band.label;
+    const em = document.createElement('em');
+    em.textContent = band.type === 'lowshelf' ? 'laag' : band.type === 'highshelf' ? 'hoog' : 'Hz';
+    freq.appendChild(em);
+
+    input.addEventListener('input', () => {
+      const v = parseFloat(input.value) || 0;
+      // Zelfde regel als volume/fades: geldt voor álle geselecteerde cues, en
+      // een spelende cue hoort het meteen.
+      applyToSelected((c) => { ensureEq(c)[i] = v; engine.updateEq(c.id, c.eq); });
+      db.textContent = fmtDb(v);
+      col.classList.toggle('actief', v !== 0);
+      persist();
+      syncEqStatus();
+    });
+
+    col.append(db, sliderWrap, freq);
+    wrap.appendChild(col);
+  });
+}
+
+// Zet de schuiven op de waarden van de primaire cue.
+function syncEqUiFromCue() {
+  const cue = cues.selected;
+  if (!cue) return;
+  const eq = ensureEq(cue);
+  document.querySelectorAll('#eqBands .eq-band').forEach((col, i) => {
+    const input = col.querySelector('input');
+    input.value = String(eq[i] || 0);
+    col.querySelector('.eq-db').textContent = fmtDb(eq[i] || 0);
+    col.classList.toggle('actief', !!eq[i]);
+  });
+}
+
+function openEq() {
+  if (locked || !cues.selected) return;
+  buildEqUi();
+  const n = selection.size > 1 ? selection.size : 1;
+  $('eqTitle').textContent = n > 1 ? `Equalizer — ${n} cues` : `Equalizer — ${cues.selected.name}`;
+  const modal = $('eqModal');
+  modal.hidden = false;
+  void modal.offsetWidth;
+  modal.classList.add('open');
+  // De gedraaide schuiven moeten precies zo lang zijn als hun kolom hoog is.
+  const w = modal.querySelector('.eq-slider-wrap');
+  if (w) $('eqBands').style.setProperty('--eq-h', `${w.clientHeight}px`);
+  syncEqUiFromCue();
+}
+
+function closeEq() {
+  const modal = $('eqModal');
+  if (modal.hidden) return;
+  document.activeElement?.blur?.(); // focus nooit in een gesloten popup laten hangen
+  modal.classList.remove('open');
+  setTimeout(() => { modal.hidden = true; }, 200);
+}
+
+function bindEq() {
+  $('eqBtn')?.addEventListener('click', openEq);
+  document.querySelectorAll('[data-eq-close]').forEach((el) => el.addEventListener('click', closeEq));
+  $('eqFlatBtn')?.addEventListener('click', () => {
+    applyToSelected((c) => { c.eq = EQ_BANDS.map(() => 0); engine.updateEq(c.id, c.eq); });
+    persist();
+    syncEqUiFromCue();
+    syncEqStatus();
+  });
+}
+
 // --- Bestanden inladen -----------------------------------------------------
 
 function addFiles(fileList) {
@@ -1014,7 +1130,7 @@ function walkEntry(entry, out) {
 // --- Instellingen-popup + project opslaan/openen ---------------------------
 
 function isModalOpen() {
-  return !settingsModal.hidden || !$('promptModal').hidden || !$('confirmModal').hidden;
+  return !settingsModal.hidden || !$('promptModal').hidden || !$('confirmModal').hidden || !$('eqModal').hidden;
 }
 
 // --- Vergrendeling (zachte lock tegen per ongeluk bewerken) -----------------
@@ -1030,7 +1146,7 @@ const LOCK_EDIT_IDS = [
   'insLoopCount', 'insLoopCrossfade', 'insInPoint', 'insOutPoint', 'insAutoContinue', 'insAutoDelay',
   'pickFolderBtn', 'pickFilesBtn',
   'setFadeIn', 'setFadeOut', 'setSingleCue', 'setBlockKeys', 'setSaveKeybinds', 'openKeysBtn', 'openProjectBtn', 'newProjectBtn',
-  'setMidi',
+  'setMidi', 'eqBtn',
 ];
 
 function hasPassword() { try { return !!JSON.parse(localStorage.getItem(LOCK_KEY)); } catch { return false; } }
@@ -1710,7 +1826,11 @@ function bindKeyboard() {
 
     // Modal open: Esc sluit, verder niets.
     if (isModalOpen()) {
-      if (e.key === 'Escape') { e.preventDefault(); closeSettings(); }
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        if (!$('eqModal').hidden) closeEq();
+        else closeSettings();
+      }
       return;
     }
 
@@ -2362,6 +2482,7 @@ async function applyShow(show) {
       const existing = cues.getById(m.id);
       if (existing) {
         Object.assign(existing, metaToCue(m, existing.file || file));
+        engine.updateEq(existing.id, existing.eq); // EQ-wijziging van een andere client direct hoorbaar
         next.push(existing);
       } else {
         next.push(metaToCue(m, file));
@@ -2926,6 +3047,7 @@ bindMidiSettings();
 bindDevices();
 bindUnlock();
 bindCueMidi();
+bindEq();
 bindSwitchBlur();
 bindProjectTitle();
 bindKeyboard();

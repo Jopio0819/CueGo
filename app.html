@@ -131,13 +131,17 @@
             </div></div>
           </section>
 
-          <section class="ins-section" data-section="volume">
-            <button type="button" class="ins-head"><svg class="ins-caret" viewBox="0 0 12 12" aria-hidden="true"><path d="M4 2l4 4-4 4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" /></svg>Volume</button>
+          <section class="ins-section" data-section="audio">
+            <button type="button" class="ins-head"><svg class="ins-caret" viewBox="0 0 12 12" aria-hidden="true"><path d="M4 2l4 4-4 4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" /></svg>Audio</button>
             <div class="ins-anim"><div class="ins-body">
               <label class="field">
                 <span>Volume <em id="insVolumeVal"></em></span>
                 <input id="insVolume" type="range" min="0" max="1" step="0.01" />
               </label>
+              <div class="field">
+                <span>Equalizer <em id="eqStatus"></em></span>
+                <button id="eqBtn" class="btn">Equalizer openen…</button>
+              </div>
             </div></div>
           </section>
 
@@ -406,6 +410,22 @@ cuego.on('cuestart', e =&gt; console.log(e))</pre>
     </div>
 
     <!-- Bevestigings-popup (custom, i.p.v. window.confirm) -->
+    <!-- Equalizer: fullscreen popup voor de geselecteerde cue(s) -->
+    <div id="eqModal" class="modal" hidden>
+      <div class="modal-backdrop" data-eq-close></div>
+      <div class="modal-card eq-card" role="dialog" aria-modal="true" aria-labelledby="eqTitle">
+        <div class="modal-head">
+          <h2 id="eqTitle">Equalizer</h2>
+          <button class="modal-close" data-eq-close aria-label="Sluiten">×</button>
+        </div>
+        <div class="eq-bands" id="eqBands"></div>
+        <div class="eq-actions">
+          <button id="eqFlatBtn" class="btn">Vlak (reset)</button>
+          <span class="settings-note">±12 dB per band · werkt direct door op een spelende cue</span>
+        </div>
+      </div>
+    </div>
+
     <div id="confirmModal" class="modal" hidden>
       <div class="modal-backdrop" data-confirm-cancel></div>
       <div class="modal-card confirm-card" role="dialog" aria-modal="true" aria-labelledby="confirmTitle">

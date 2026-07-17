@@ -71,6 +71,7 @@ export function saveMeta(cues) {
     autoContinue: !!c.autoContinue,
     autoContinueDelay: c.autoContinueDelay ?? 1,
     midiTrigger: c.midiTrigger || '',
+    eq: Array.isArray(c.eq) ? c.eq.slice(0, 6).map(Number) : [0, 0, 0, 0, 0, 0],
   }));
   try {
     localStorage.setItem(META_KEY, JSON.stringify(meta));
