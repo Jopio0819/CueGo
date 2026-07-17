@@ -2,9 +2,9 @@
 // Audio-bytes gaan in IndexedDB (kan groot zijn); lichte metadata (naam, fades,
 // volume, volgorde) in localStorage. Zo hoef je na een refresh niets opnieuw te slepen.
 
-const DB_NAME = 'webqlab';
+const DB_NAME = 'CueGo';
 const STORE = 'audio';
-const META_KEY = 'webqlab.cues.v1';
+const META_KEY = 'CueGo.cues.v1';
 
 function openDB() {
   return new Promise((resolve, reject) => {
