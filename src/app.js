@@ -2457,9 +2457,9 @@ function updateControlTab() {
     }
     const note = $('remoteTokenNote');
     if (note) {
-      note.textContent = serverInfo.tokenRequired
-        ? 'Er is een token ingesteld — voeg ?token=… aan de URL toe.'
-        : 'Iedereen op dit netwerk kan de show bedienen. Wil je dat niet? Start met CUEGO_TOKEN=geheim node server.mjs';
+      note.textContent = serverInfo.adminLock
+        ? 'De remote vraagt om het admin-wachtwoord (dat je bij het starten hebt ingevuld).'
+        : 'Zonder admin-wachtwoord kan iedereen op dit netwerk de show bedienen. Vul er bij het starten van de server één in als je dat niet wilt.';
     }
   }
 
@@ -2469,8 +2469,8 @@ function updateControlTab() {
     const info = serverInfo.osc || {};
     osc.textContent = info.enabled
       ? `Luistert op UDP-poort ${info.port}. Stuur OSC vanaf een lichttafel, QLab of ander show-control-systeem:`
-      : serverInfo.tokenRequired
-        ? 'Uit, omdat er een token is ingesteld en OSC geen token kent. Toch aanzetten: CUEGO_OSC=on node server.mjs'
+      : serverInfo.adminLock
+        ? 'Uit, omdat er een admin-wachtwoord is ingesteld en OSC geen wachtwoord kent. Toch aanzetten: CUEGO_OSC=on node server.mjs'
         : `Uit — poort ${info.port || 53000} was bezet of OSC staat op off. Andere poort: CUEGO_OSC_PORT=53001`;
     osc.classList.toggle('ok', !!info.enabled);
   }

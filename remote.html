@@ -65,6 +65,20 @@
       .lockbox .lockicon { font-size: 44px; margin-bottom: 14px; opacity: 0.9; }
       .lockbox p { margin: 0 0 6px; font-size: 17px; font-weight: 700; }
       .lockbox span { color: var(--faint); font-size: 13px; }
+      .pwrow { display: flex; gap: 8px; margin: 18px auto 0; max-width: 300px; }
+      .pwrow input {
+        flex: 1; min-width: 0; font: inherit; font-size: 15px;
+        color: var(--text); background: var(--panel-2);
+        border: 1px solid var(--line-strong); border-radius: 9px; padding: 11px 13px;
+        outline: none;
+      }
+      .pwrow input:focus { border-color: var(--accent); }
+      .pwrow button {
+        flex: none; padding: 11px 16px; font-size: 14px; font-weight: 600;
+        background: var(--accent); color: #fff; border: none; border-radius: 9px;
+      }
+      /* Het wachtwoordscherm zelf moet wél klikbaar blijven als de rest op slot zit. */
+      body.locked-out .lockbox .pwrow button { opacity: 1; pointer-events: auto; }
       body.locked-out .pad button { opacity: 0.35; pointer-events: none; }
 
       .pad {
@@ -109,10 +123,13 @@
     </div>
 
     <script>
-      // Token uit de URL (?token=…) meenemen als de server er om vraagt.
-      const token = new URLSearchParams(location.search).get('token') || '';
-      const q = token ? `&token=${encodeURIComponent(token)}` : '';
-      const qOnly = token ? `?token=${encodeURIComponent(token)}` : '';
+      // Het admin-wachtwoord is het enige wachtwoord. Mag uit de URL komen
+      // (?pw=…) of je vult 'm hier in; daarna onthouden we 'm voor deze sessie.
+      const PW_KEY = 'cuego.pw';
+      let pw = new URLSearchParams(location.search).get('pw')
+        || sessionStorage.getItem(PW_KEY) || '';
+      const q = () => (pw ? `&pw=${encodeURIComponent(pw)}` : '');
+      const qOnly = () => (pw ? `?pw=${encodeURIComponent(pw)}` : '');
 
       const $ = (id) => document.getElementById(id);
       const listEl = $('list');
@@ -120,7 +137,7 @@
       let lastRender = '';
 
       function send(cmd, args) {
-        fetch(`api/command${qOnly}`, {
+        fetch(`api/command${qOnly()}`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ cmd, args }),
@@ -180,8 +197,48 @@
         }
       }
 
-      function connect() {
-        const es = new EventSource(`api/events?role=remote${q}`);
+      // Wachtwoord vragen zodra de server 'm eist. Zonder dit zou de remote
+      // alleen maar dood staan zonder te zeggen waarom.
+      function askForPassword(melding) {
+        listEl.innerHTML = `
+          <div class="lockbox">
+            <div class="lockicon">🔒</div>
+            <p>Wachtwoord vereist</p>
+            <span>${melding || 'Voer het admin-wachtwoord van de showcomputer in.'}</span>
+            <div class="pwrow">
+              <input id="pwInput" type="password" placeholder="Wachtwoord" autocomplete="current-password" />
+              <button id="pwBtn">Verbind</button>
+            </div>
+          </div>`;
+        document.body.classList.add('locked-out');
+        const submit = async () => {
+          const v = document.getElementById('pwInput').value;
+          const res = await fetch(`api/unlock`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ password: v }),
+          }).catch(() => null);
+          if (!res?.ok) { askForPassword('Onjuist wachtwoord — probeer opnieuw.'); return; }
+          pw = v;
+          sessionStorage.setItem(PW_KEY, pw);
+          document.body.classList.remove('locked-out');
+          lastRender = '';
+          listEl.innerHTML = '<p class="empty">Verbinden…</p>';
+          connect();
+        };
+        document.getElementById('pwBtn').addEventListener('click', submit);
+        document.getElementById('pwInput').addEventListener('keydown', (e) => {
+          if (e.key === 'Enter') submit();
+        });
+        document.getElementById('pwInput').focus();
+      }
+
+      async function connect() {
+        // Eerst kijken of er een wachtwoord nodig is; anders krijg je een
+        // EventSource die eindeloos opnieuw probeert op een 401.
+        const ping = await fetch('api/ping', { cache: 'no-store' }).then((r) => r.json()).catch(() => null);
+        if (ping?.adminLock && !pw) { askForPassword(); return; }
+
+        const es = new EventSource(`api/events?role=remote${q()}`);
         // De stip toont of CUEGO zelf live is (niet alleen of de server bereikbaar is).
         es.addEventListener('hello', (e) => {
           let info = {};

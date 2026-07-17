@@ -12,7 +12,8 @@
 //   POST /api/command           → { cmd, args } → naar de app
 //   POST /api/state             → toestand van de app → naar de remotes
 //
-// Optioneel wachtwoord op het netwerk: CUEGO_TOKEN=geheim node server.mjs
+// Bij het starten wordt om een admin-wachtwoord gevraagd: dat vergrendelt elk
+// apparaat tot het daar is ingevuld, en remotes moeten het meesturen.
 import { createServer } from 'node:http';
 import { readFile, writeFile, readdir, stat, mkdir, unlink } from 'node:fs/promises';
 import { extname, join, normalize } from 'node:path';
@@ -24,12 +25,17 @@ import { parseOsc, oscToCommand } from './osc.mjs';
 
 const ROOT = fileURLToPath(new URL('.', import.meta.url));
 const PORT = process.env.PORT ? Number(process.env.PORT) : 4321;
-const TOKEN = process.env.CUEGO_TOKEN || ''; // leeg = geen token vereist
+// Geen apart netwerk-token meer: het admin-wachtwoord is het enige wachtwoord.
+// Een token dat de app zelf niet kent sloot 'm buiten van z'n eigen endpoints.
 const OSC_PORT = process.env.CUEGO_OSC_PORT ? Number(process.env.CUEGO_OSC_PORT) : 53000;
-// OSC kent geen token. Staat er een token ingesteld, dan is de bedoeling "dicht",
-// dus dan blijft OSC uit tenzij je 'm expliciet aanzet.
+// OSC kent geen wachtwoord. Staat er een admin-wachtwoord, dan is de bedoeling
+// "dicht", dus blijft OSC uit tenzij je 'm expliciet aanzet. (Pas te bepalen als
+// het wachtwoord bekend is — zie startOsc.)
 const OSC_SETTING = (process.env.CUEGO_OSC || '').toLowerCase();
-const OSC_ENABLED = OSC_SETTING === 'off' ? false : (TOKEN ? OSC_SETTING === 'on' : true);
+function oscEnabled() {
+  if (OSC_SETTING === 'off') return false;
+  return adminPassword ? OSC_SETTING === 'on' : true;
+}
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -317,9 +323,15 @@ function sendCommand(cmd, args) {
   return 1;
 }
 
-function tokenOk(url) {
-  if (!TOKEN) return true;
-  return url.searchParams.get('token') === TOKEN;
+// Alleen de remote-kant (telefoon, curl, OSC) zit achter het admin-wachtwoord.
+// De app zelf niet: die endpoints heeft hij nodig om te kunnen bestaan, en de
+// app kent geen wachtwoord tot je 't invult. Eigen clients herkennen we aan hun
+// deviceId. Dat is een zachte drempel, geen echte beveiliging: over http gaat
+// alles onversleuteld over je netwerk.
+function remoteAuthOk(url, body) {
+  if (!adminPassword) return true;
+  const given = url.searchParams.get('pw') ?? body?.password;
+  return given === adminPassword;
 }
 
 function json(res, code, data) {
@@ -386,7 +398,7 @@ function openSse(req, res, role, deviceId, label) {
     // (zie touchDevice). Verbonden zijn zegt niets — een bevroren tab herverbindt
     // ook, en die mag de rol niet kapen.
     sseSend(client, 'hello', {
-      role, token: !!TOKEN, appId: client.appId, deviceId: client.deviceId,
+      role, appId: client.appId, deviceId: client.deviceId,
       primary: client.deviceId === primaryDeviceId,
     });
     // Meekijkende client: meteen de huidige afspeeltoestand, anders staat z'n
@@ -394,7 +406,7 @@ function openSse(req, res, role, deviceId, label) {
     if (lastState && client.deviceId !== primaryDeviceId) sseSend(client, 'state', lastState);
     broadcastDevices();
   } else {
-    sseSend(client, 'hello', { role, token: !!TOKEN, appOnline: !!primaryApp() });
+    sseSend(client, 'hello', { role, appOnline: !!primaryApp() });
     // Een nieuwe remote krijgt meteen de laatst bekende toestand — maar alleen als de
     // app ook echt verbonden is, anders tonen we een oude sessie als 'live'.
     if (lastState && primaryApp()) sseSend(client, 'state', lastState);
@@ -442,7 +454,7 @@ const server = createServer(async (req, res) => {
     // server-afhankelijke opties (netwerk-remote, OSC) getoond worden.
     if (urlPath === '/api/ping') {
       json(res, 200, {
-        cuego: true, version: 1, port: PORT, ips: lanIps(), tokenRequired: !!TOKEN,
+        cuego: true, version: 1, port: PORT, ips: lanIps(),
         adminLock: !!adminPassword, // apparaten starten dan vergrendeld
         osc: { enabled: oscListening, port: OSC_PORT },
       });
@@ -489,7 +501,6 @@ const server = createServer(async (req, res) => {
     if (urlPath === '/api/devices') {
       if (req.method === 'GET') { json(res, 200, { showDeviceId: primaryDeviceId, devices: deviceList() }); return; }
       if (req.method !== 'POST' && req.method !== 'PUT') { json(res, 405, { error: 'Gebruik GET of POST' }); return; }
-      if (!tokenOk(url)) { json(res, 401, { error: 'Ongeldig token' }); return; }
       const body = await readJson(req).catch(() => null);
       if (!body) { json(res, 400, { error: 'Ongeldige JSON' }); return; }
 
@@ -522,7 +533,6 @@ const server = createServer(async (req, res) => {
     if (urlPath === '/api/show') {
       if (req.method === 'GET') { json(res, 200, await loadShow()); return; }
       if (req.method === 'PUT' || req.method === 'POST') {
-        if (!tokenOk(url)) { json(res, 401, { error: 'Ongeldig token' }); return; }
         const body = await readJson(req, 5e7).catch(() => null);
         if (!body || !Array.isArray(body.cues)) { json(res, 400, { error: 'Verwacht { appId, cues, name }' }); return; }
         const data = await saveShow(body.cues, body.appId, body.name);
@@ -540,7 +550,6 @@ const server = createServer(async (req, res) => {
       const file = join(AUDIO_DIR, id);
 
       if (req.method === 'PUT' || req.method === 'POST') {
-        if (!tokenOk(url)) { json(res, 401, { error: 'Ongeldig token' }); return; }
         const buf = await readBuffer(req).catch((err) => { json(res, 413, { error: err.message }); return null; });
         if (!buf) return;
         await mkdir(AUDIO_DIR, { recursive: true });
@@ -556,7 +565,6 @@ const server = createServer(async (req, res) => {
         return;
       }
       if (req.method === 'DELETE') {
-        if (!tokenOk(url)) { json(res, 401, { error: 'Ongeldig token' }); return; }
         await unlink(file).catch(() => {});
         json(res, 200, { ok: true });
         return;
@@ -576,7 +584,6 @@ const server = createServer(async (req, res) => {
       const file = join(PROJECTS_DIR, name);
 
       if (req.method === 'PUT' || req.method === 'POST') {
-        if (!tokenOk(url)) { json(res, 401, { error: 'Ongeldig token' }); return; }
         const buf = await readBuffer(req).catch((err) => { json(res, 413, { error: err.message }); return null; });
         if (!buf) return;
         await mkdir(PROJECTS_DIR, { recursive: true });
@@ -585,7 +592,6 @@ const server = createServer(async (req, res) => {
         return;
       }
       if (req.method === 'DELETE') {
-        if (!tokenOk(url)) { json(res, 401, { error: 'Ongeldig token' }); return; }
         await unlink(file).catch(() => {});
         json(res, 200, { ok: true });
         return;
@@ -601,8 +607,9 @@ const server = createServer(async (req, res) => {
     }
 
     if (urlPath === '/api/events') {
-      if (!tokenOk(url)) { json(res, 401, { error: 'Ongeldig token' }); return; }
       const role = url.searchParams.get('role') === 'app' ? 'app' : 'remote';
+      // Remotes achter het admin-wachtwoord; de app zelf niet (die kent 'm niet).
+      if (role === 'remote' && !remoteAuthOk(url)) { json(res, 401, { error: 'Onjuist wachtwoord' }); return; }
       const dev = url.searchParams.get('deviceId');
       // Een app moet zich identificeren. Zonder id kunnen we een refresh niet van
       // een nieuw apparaat onderscheiden, en zou zo'n naamloze (mogelijk dode)
@@ -614,7 +621,6 @@ const server = createServer(async (req, res) => {
 
     if (urlPath === '/api/command') {
       if (req.method !== 'POST') { json(res, 405, { error: 'Gebruik POST' }); return; }
-      if (!tokenOk(url)) { json(res, 401, { error: 'Ongeldig token' }); return; }
       const body = await readJson(req).catch(() => null);
       if (!body || !body.cmd) { json(res, 400, { error: 'Verwacht { cmd, args }' }); return; }
 
@@ -623,9 +629,12 @@ const server = createServer(async (req, res) => {
       // alleen door omdat zij niet de showcomputer zijn. Een client identificeert
       // zich met z'n deviceId; alleen echte remotes vallen onder de blokkade.
       const fromOwnClient = body.deviceId && appClients().some((c) => c.deviceId === body.deviceId);
-      if (!fromOwnClient && lastState && lastState.remoteEnabled === false) {
-        json(res, 403, { error: 'Afstandsbediening staat uit' });
-        return;
+      if (!fromOwnClient) {
+        if (!remoteAuthOk(url, body)) { json(res, 401, { error: 'Onjuist wachtwoord' }); return; }
+        if (lastState && lastState.remoteEnabled === false) {
+          json(res, 403, { error: 'Afstandsbediening staat uit' });
+          return;
+        }
       }
       json(res, 200, { ok: true, delivered: sendCommand(body.cmd, body.args) });
       return;
@@ -634,7 +643,6 @@ const server = createServer(async (req, res) => {
     if (urlPath === '/api/state') {
       if (req.method === 'GET') { json(res, 200, lastState || {}); return; }
       if (req.method !== 'POST') { json(res, 405, { error: 'Gebruik POST of GET' }); return; }
-      if (!tokenOk(url)) { json(res, 401, { error: 'Ongeldig token' }); return; }
       const body = await readJson(req).catch(() => null);
       if (!body || !body.state) { json(res, 400, { error: 'Verwacht { appId, state }' }); return; }
       // Alleen de actieve app bepaalt de toestand. Zonder dit overschrijft een
@@ -690,7 +698,7 @@ const server = createServer(async (req, res) => {
 let oscListening = false;
 
 function startOsc() {
-  if (!OSC_ENABLED) return;
+  if (!oscEnabled()) return;
   // Geen reuseAddr: we willen juist een nette EADDRINUSE als een ander programma
   // (of een tweede CueGo) de poort al heeft, i.p.v. stilletjes half meeluisteren.
   const sock = createSocket({ type: 'udp4' });
@@ -731,8 +739,8 @@ server.listen(PORT, () => {
   if (ips.length) {
     console.log(`Afstandsbediening: ${ips.map((ip) => `http://${ip}:${PORT}/remote.html`).join('  ')}`);
   }
-  if (TOKEN) console.log('Token vereist (CUEGO_TOKEN) — voeg ?token=… toe aan de remote-URL.');
-  else if (ips.length) console.log('Let op: iedereen op dit netwerk kan de show bedienen. Zet CUEGO_TOKEN=… voor een token.');
-  if (TOKEN && !OSC_ENABLED) console.log('OSC uit: OSC kent geen token. Toch aanzetten? CUEGO_OSC=on');
+  if (adminPassword) console.log('Remotes vragen om het admin-wachtwoord.');
+  else if (ips.length) console.log('Let op: zonder admin-wachtwoord kan iedereen op dit netwerk de show bedienen.');
+  if (adminPassword && !oscEnabled()) console.log('OSC uit: OSC kent geen wachtwoord. Toch aanzetten? CUEGO_OSC=on');
   startOsc();
 });
