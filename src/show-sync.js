@@ -14,14 +14,19 @@ export async function fetchShow() {
   return await res.json();
 }
 
-// Stuur de hele show (naam + cue-lijst + single cue-modus) naar de server.
-// `appId` markeert ons als afzender, zodat we onze eigen wijziging niet als
-// update terugkrijgen.
+// Stuur de hele show (naam + cue-lijst) naar de server. `appId` markeert ons als
+// afzender, zodat we onze eigen wijziging niet als update terugkrijgen.
+//
+// `single` (single cue-modus) sturen we ALLEEN mee als het een boolean is: laat
+// je 'm weg, dan behoudt de server de opgeslagen stand. Zo overschrijft een
+// gewone cue-bewerking nooit per ongeluk de modus van een ander apparaat.
 export async function pushShow(appId, cueMetas, name, single) {
+  const payload = { appId, cues: cueMetas, name };
+  if (typeof single === 'boolean') payload.single = single;
   const res = await fetch('api/show', {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ appId, cues: cueMetas, name, single: !!single }),
+    body: JSON.stringify(payload),
   });
   if (!res.ok) throw new Error('Kon de show niet opslaan');
   return await res.json();

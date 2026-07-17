@@ -1634,7 +1634,7 @@ function bindSettings() {
       if (keep) fadeOutOthers(keep, 0.3);
     }
     render();
-    schedulePushShow(); // de modus geldt voor de hele show, dus ook voor de showcomputer
+    pushSingleMode(); // de modus geldt voor de hele show, dus ook voor de showcomputer
   });
   $('setBlockKeys').addEventListener('change', (e) => { settings.blockBrowserKeys = e.target.checked; saveSettings(); });
   $('setSaveKeybinds').addEventListener('change', (e) => { settings.saveKeybindsWithProject = e.target.checked; saveSettings(); });
@@ -2629,18 +2629,33 @@ function schedulePushShow() {
   clearTimeout(pushShowTimer);
   pushShowTimer = setTimeout(async () => {
     const metas = cues.cues.map(cueToMeta);
-    // Naam en single cue-modus horen bij de show, niet bij het apparaat — anders
-    // heet dezelfde show op elke client anders, en speelt de showcomputer met
-    // een andere modus dan de client die 'm aanzette.
-    const body = JSON.stringify({ name: projectName, single: !!settings.singleCueMode, cues: metas });
+    // Naam hoort bij de show; single cue-modus JUIST NIET meesturen. Anders
+    // stampt elke cue-bewerking (hernoemen, slepen, volume) de lokale modus van
+    // dít apparaat over de gedeelde stand — en vechten meerdere clients erom.
+    // De modus verandert alleen via z'n eigen toggle (pushSingleMode).
+    const body = JSON.stringify({ name: projectName, cues: metas });
     if (body === lastPushed) return; // niets werkelijk veranderd
     lastPushed = body;
     try {
-      await showSync.pushShow(appLink?.appId() ?? null, metas, projectName, settings.singleCueMode);
+      await showSync.pushShow(appLink?.appId() ?? null, metas, projectName); // single weggelaten → server behoudt 'm
     } catch (err) {
       console.warn('Show synchroniseren mislukt:', err.message);
     }
   }, 250);
+}
+
+// Expliciete wijziging van single cue-modus naar de gedeelde show sturen. Dit is
+// de énige plek die 'single' meestuurt, zodat een cue-bewerking van een ander
+// apparaat de modus nooit per ongeluk terugzet.
+async function pushSingleMode() {
+  if (!sharedShow || applyingRemote) return;
+  const metas = cues.cues.map(cueToMeta);
+  lastPushed = JSON.stringify({ name: projectName, cues: metas }); // cue-staat gaat mee, dus dedup bijwerken
+  try {
+    await showSync.pushShow(appLink?.appId() ?? null, metas, projectName, settings.singleCueMode);
+  } catch (err) {
+    console.warn('Single cue-modus synchroniseren mislukt:', err.message);
+  }
 }
 
 // Zet de show van de server neer. Bestaande cue-objecten passen we ter plekke aan
@@ -2709,7 +2724,7 @@ async function applyShow(show) {
     }
 
     saveMeta(cues.cues); // lokale cache bijwerken
-    lastPushed = JSON.stringify({ name: projectName, single: !!settings.singleCueMode, cues: cues.cues.map(cueToMeta) }); // kwam van de server
+    lastPushed = JSON.stringify({ name: projectName, cues: cues.cues.map(cueToMeta) }); // kwam van de server (single staat los)
     render();
     // Niet de inspector verversen terwijl iemand in een veld typt — dan zou de
     // tekst onder z'n handen verspringen.
@@ -2736,7 +2751,8 @@ async function uploadWholeShow() {
     }
   }
   const metas = cues.cues.map(cueToMeta);
-  lastPushed = JSON.stringify({ name: projectName, single: !!settings.singleCueMode, cues: metas });
+  lastPushed = JSON.stringify({ name: projectName, cues: metas }); // single staat los van de dedup-sleutel
+  // Eerste schrijver: onze single-stand wordt de beginwaarde van de gedeelde show.
   await showSync.pushShow(appLink?.appId() ?? null, metas, projectName, settings.singleCueMode).catch((err) => console.warn(err.message));
 }
 
