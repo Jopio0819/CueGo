@@ -1083,7 +1083,8 @@ function applyLockState() {
   const addToggle = document.querySelector('[data-menu] [data-menu-toggle]');
   if (addToggle) addToggle.disabled = locked;
   const lockBtn = $('lockBtn');
-  lockBtn.hidden = !hasPassword(); // geen slot-icoon als er geen wachtwoord is
+  // Slot tonen bij een lokaal wachtwoord óf een admin-wachtwoord op de server.
+  lockBtn.hidden = !hasPassword() && !adminLock;
   lockBtn.classList.toggle('locked-on', locked);
   lockBtn.title = locked ? 'Ontgrendelen (bewerken is vergrendeld)' : 'Vergrendelen';
   lockBtn.querySelector('.ic-locked').hidden = !locked;
@@ -1098,16 +1099,30 @@ function applyLockState() {
 // Slot-knop in de balk: alleen (ont)grendelen — het slot is verborgen als er geen
 // wachtwoord is (instellen gebeurt via Instellingen).
 async function toggleLock() {
-  if (!hasPassword()) return;
-  if (locked) {
-    const pw = await customPrompt({
-      title: 'Ontgrendelen', message: 'Voer je wachtwoord in om bewerken te ontgrendelen.', okLabel: 'Ontgrendel',
-      validate: async (v) => ((await checkPassword(v)) ? true : 'Onjuist wachtwoord.'),
-    });
-    if (pw != null) setLocked(false);
-  } else {
-    setLocked(true);
-  }
+  if (!hasPassword() && !adminLock) return;
+  if (!locked) { setLocked(true); return; }
+
+  // Admin-wachtwoord: de server controleert 'm, zodat één wachtwoord voor alle
+  // apparaten geldt. Anders het lokale wachtwoord van dit apparaat.
+  const pw = await customPrompt({
+    title: 'Ontgrendelen',
+    message: adminLock
+      ? 'Voer het admin-wachtwoord in om op dit apparaat te kunnen bewerken.'
+      : 'Voer je wachtwoord in om bewerken te ontgrendelen.',
+    okLabel: 'Ontgrendel',
+    validate: async (v) => {
+      if (adminLock) {
+        const res = await fetch('api/unlock', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ password: v, deviceId: deviceId() }),
+        }).catch(() => null);
+        return res?.ok ? true : 'Onjuist wachtwoord.';
+      }
+      return (await checkPassword(v)) ? true : 'Onjuist wachtwoord.';
+    },
+  });
+  if (pw != null) setLocked(false);
 }
 
 // Custom wachtwoord-prompt met inline validatie. Geeft Promise<string|null>.
@@ -1189,9 +1204,15 @@ function syncSettingsForm() {
 // Toon de vergrendel-status, het ontgrendel-blok en de instellen/verwijderen-knop.
 function updateLockSettingsUI() {
   const has = hasPassword();
-  $('lockStatusNote').textContent = has
-    ? 'Er is een wachtwoord ingesteld. Gebruik het slot in de balk om te (ont)grendelen.'
-    : 'Stel een wachtwoord in om bewerkingen te kunnen vergrendelen.';
+
+  // Beheert de server het wachtwoord, dan heeft een eigen wachtwoord per apparaat
+  // geen zin: verberg die knop, anders staan er twee wachtwoorden naast elkaar.
+  $('passwordBtn').hidden = adminLock;
+  $('lockStatusNote').textContent = adminLock
+    ? 'De server beheert het admin-wachtwoord (gevraagd bij het starten). Elk apparaat start vergrendeld tot het daar is ingevuld.'
+    : has
+      ? 'Er is een wachtwoord ingesteld. Gebruik het slot in de balk om te (ont)grendelen.'
+      : 'Stel een wachtwoord in om bewerkingen te kunnen vergrendelen.';
   $('passwordBtn').textContent = has ? 'Wachtwoord verwijderen…' : 'Wachtwoord instellen…';
 
   // Vergrendeld? Dan hier ontgrendelen. Zonder wachtwoord (bv. vergrendeld vanaf
@@ -2329,7 +2350,7 @@ function renderDevices() {
 
   for (const d of devicesInfo.devices) {
     const row = document.createElement('div');
-    row.className = 'device-row' + (d.isShow ? ' is-show' : '');
+    row.className = 'device-row' + (d.deviceId === deviceId() ? ' is-me' : '');
 
     const name = document.createElement('span');
     name.className = 'device-name';

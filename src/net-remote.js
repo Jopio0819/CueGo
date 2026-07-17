@@ -162,6 +162,11 @@ export function connectAppLink({ dispatch, getState, on, onStatus, onShow, onDev
     clearInterval(beatTimer);
     beat(); // meteen één, niet pas na 8s
     beatTimer = setInterval(beat, HEARTBEAT_MS);
+    // Browsers knijpen timers in achtergrond-tabs af. Kom je terug, ping dan
+    // meteen in plaats van te wachten tot de trage timer weer afgaat.
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible' && !stopped) beat();
+    });
   }
 
   // De app rendert → toestand is nu écht bij. Even samenvoegen zodat een reeks

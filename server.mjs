@@ -188,7 +188,12 @@ let primaryDeviceId = null;
 // bfcached tab houdt 'm open terwijl er niets meer draait. Zonder deze check kan
 // zo'n dode client de showcomputer-rol vasthouden en landt GO in het niets.
 // Clients pingen daarom actief; bevroren tabs hebben bevroren timers en vallen af.
-const HEARTBEAT_TIMEOUT_MS = 25000;
+// Ruim boven de ~60s waartoe browsers timers in achtergrond-tabs afknijpen. Korter
+// en je ruimt een prima draaiende, maar niet-actieve client op zodra je naar een
+// ander venster klikt. Een tab die je gewoon sluit merken we meteen via het
+// verbreken van de SSE-verbinding; deze grens is puur de vangnet voor bevroren
+// pagina's, die helemaal geen timers meer draaien.
+const HEARTBEAT_TIMEOUT_MS = 90000;
 const REAP_INTERVAL_MS = 5000;
 
 function appClients() {

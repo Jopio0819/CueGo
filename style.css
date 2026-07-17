@@ -567,11 +567,25 @@ body.dragging .drop-overlay { display: flex; }
 .settings-lock .settings-note { margin-bottom: 10px; }
 
 /* Ontgrendelen vanuit Beveiliging */
-#unlockSection { padding: 14px; border: 1px solid var(--accent); border-radius: 10px; background: var(--panel-2); }
+#unlockSection {
+  padding: 16px; border-radius: 10px;
+  border: 1px solid var(--line-strong);
+  background: var(--panel-2);
+}
+#unlockSection .settings-note { margin: 0 0 12px; }
 .unlock-row { display: flex; gap: 8px; align-items: center; }
-.unlock-row input { flex: 1; min-width: 0; }
+.unlock-row input {
+  flex: 1; min-width: 0;
+  background: var(--bg); color: var(--text);
+  border: 1px solid var(--line-strong); border-radius: 8px;
+  padding: 9px 12px; font: inherit; font-size: 13px;
+  outline: none; transition: border-color 0.12s;
+}
+.unlock-row input:focus { border-color: var(--accent); }
+.unlock-row input::placeholder { color: var(--faint); }
 .unlock-row input[hidden] { display: none !important; }
-.settings-note.error { color: var(--danger, #e2564a); margin: 8px 0 0; }
+.unlock-row .btn { flex: none; }
+.settings-note.error { color: var(--danger, #e2564a); margin: 10px 0 0; }
 
 /* Besturing-tab */
 .control-section { margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--line); }
@@ -618,7 +632,9 @@ body.dragging .drop-overlay { display: flex; }
   background: var(--panel-2); border: 1px solid var(--line);
   font-size: 13px;
 }
-.device-row.is-show { border-color: var(--play, #35c88f); }
+/* De rand markeert wélk apparaat je nu bedient — niet wie het geluid maakt.
+   Dat laatste lees je aan het 🔊-label af. */
+.device-row.is-me { border-color: var(--play, #35c88f); background: rgba(53, 200, 143, 0.07); }
 .device-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .device-tag { color: var(--play, #35c88f); font-size: 11px; flex: none; }
 
