@@ -1089,6 +1089,7 @@ function applyLockState() {
   lockBtn.querySelector('.ic-locked').hidden = !locked;
   lockBtn.querySelector('.ic-unlocked').hidden = locked;
   syncCueMidi(); // trigger-veld hangt van lock én MIDI-status af
+  applyLockToSections(); // grijs wat je nu toch niet kunt bewerken
   updateLockSettingsUI(); // ook bij vergrendelen vanaf een ander apparaat
   renderDevices(); // (ont)grendel-knoppen volgen onze eigen lock-status
   render(); // draggable-status van rijen bijwerken
@@ -1201,21 +1202,39 @@ function updateLockSettingsUI() {
   section.hidden = !locked;
   if (!locked) { $('unlockError').hidden = true; $('unlockInput').value = ''; return; }
 
-  $('unlockNote').textContent = has
-    ? 'Dit apparaat is vergrendeld. Voer het wachtwoord in om bewerken vrij te geven.'
-    : 'Dit apparaat is vergrendeld vanaf een ander apparaat. Er is hier geen wachtwoord ingesteld.';
-  $('unlockInput').hidden = !has;
+  // Bij een admin-wachtwoord op de server valt er altijd iets in te vullen, ook
+  // al staat er lokaal geen wachtwoord.
+  const canAsk = has || adminLock;
+  $('unlockNote').textContent = adminLock
+    ? 'Dit apparaat is vergrendeld. Voer het admin-wachtwoord in om hier te kunnen bewerken.'
+    : has
+      ? 'Dit apparaat is vergrendeld. Voer het wachtwoord in om bewerken vrij te geven.'
+      : 'Dit apparaat is vergrendeld vanaf een ander apparaat. Er is hier geen wachtwoord ingesteld.';
+  $('unlockInput').hidden = !canAsk;
 }
 
+// Draait er een server met een admin-wachtwoord, dan controleert die 'm — zo geldt
+// één wachtwoord voor alle apparaten. Anders het lokale wachtwoord van dit apparaat.
 async function tryUnlock() {
   const input = $('unlockInput');
   const err = $('unlockError');
-  if (hasPassword() && !(await checkPassword(input.value))) {
-    err.textContent = 'Onjuist wachtwoord.';
-    err.hidden = false;
-    input.select();
-    return;
+  const fail = (msg) => { err.textContent = msg; err.hidden = false; input.select(); };
+
+  if (adminLock) {
+    try {
+      const res = await fetch('api/unlock', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password: input.value, deviceId: deviceId() }),
+      });
+      if (!res.ok) return fail('Onjuist wachtwoord.');
+    } catch {
+      return fail('Geen verbinding met de server.');
+    }
+  } else if (hasPassword() && !(await checkPassword(input.value))) {
+    return fail('Onjuist wachtwoord.');
   }
+
   input.value = '';
   err.hidden = true;
   setLocked(false); // roept applyLockState → updateLockSettingsUI
@@ -2064,9 +2083,9 @@ function syncCueMidi() {
       : !settings.midiEnabled ? '(zet MIDI aan bij Instellingen → MIDI)'
       : '';
   }
-  // Hele sectie grijs zolang MIDI-besturing niet aan staat.
+  // Grijs zolang MIDI-besturing uit staat — of zolang dit apparaat vergrendeld is.
   const section = document.querySelector('.ins-section[data-section="midi"]');
-  if (section) section.classList.toggle('section-off', !(MIDI_SUPPORTED && settings.midiEnabled));
+  if (section) section.classList.toggle('section-off', locked || !(MIDI_SUPPORTED && settings.midiEnabled));
 }
 
 function bindCueMidi() {
@@ -2121,6 +2140,7 @@ let linkConnected = false;
 // Op statische hosting blijft alles lokaal, precies zoals het was.
 
 let sharedShow = false;
+let adminLock = false; // server heeft een admin-wachtwoord → elk apparaat start vergrendeld
 let applyingRemote = false; // wijziging komt van een andere client → niet terugsturen
 let pushShowTimer = null;
 let lastPushed = '';
@@ -2226,6 +2246,10 @@ async function initServerDetection() {
   // Lokaal? Dan luisteren naar commando's van remotes en onze toestand terugsturen.
   if (serverInfo) {
     sharedShow = true; // de server is nu eigenaar van de cue-lijst
+    // Admin-wachtwoord op de server → dit apparaat begint vergrendeld, tot het
+    // wachtwoord hiér is ingevuld (Instellingen → Beveiliging).
+    adminLock = !!serverInfo.adminLock;
+    if (adminLock) setLocked(true);
     appLink = connectAppLink({
       // dispatchLocal: dit komt al van de server, dus hier uitvoeren en niet
       // opnieuw doorsturen (dat zou een lus geven).
@@ -2502,8 +2526,31 @@ function setOpenSection(id) {
   saveInsOpen(id);
 }
 
+// Wat je tijdens een show nog mag bijstellen op een vergrendeld apparaat.
+// De rest van de inspector heeft dan niets te bieden en wordt grijs.
+const SECTIONS_EDITABLE_WHEN_LOCKED = ['fades', 'loop'];
+
+function applyLockToSections() {
+  const sections = [...document.querySelectorAll('.ins-section')];
+  if (!sections.length) return;
+  for (const s of sections) {
+    const id = s.dataset.section;
+    const usable = !locked || SECTIONS_EDITABLE_WHEN_LOCKED.includes(id);
+    // MIDI regelt z'n eigen grijs (hangt ook van de MIDI-status af).
+    if (id !== 'midi') s.classList.toggle('section-off', !usable);
+  }
+  if (!locked) return;
+  // Sta je op een sectie die nu niets meer doet? Spring naar de eerste die wél werkt.
+  const open = sections.find((s) => !s.classList.contains('collapsed'));
+  const openId = open?.dataset.section;
+  if (!openId || !SECTIONS_EDITABLE_WHEN_LOCKED.includes(openId)) {
+    setOpenSection(SECTIONS_EDITABLE_WHEN_LOCKED[0]);
+  }
+}
+
 function bindInspectorSections() {
   setOpenSection(loadInsOpen());
+  applyLockToSections();
   for (const section of document.querySelectorAll('.ins-section')) {
     section.querySelector('.ins-head').addEventListener('click', () => {
       // Nogmaals op de open sectie klikken = dichtklappen (dan staat alles dicht).

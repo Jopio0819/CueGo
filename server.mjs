@@ -19,6 +19,7 @@ import { extname, join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { networkInterfaces } from 'node:os';
 import { createSocket } from 'node:dgram';
+import { createInterface } from 'node:readline';
 import { parseOsc, oscToCommand } from './osc.mjs';
 
 const ROOT = fileURLToPath(new URL('.', import.meta.url));
@@ -86,6 +87,47 @@ function readBuffer(req, limit = 2e9) {
     req.on('end', () => resolve(Buffer.concat(chunks)));
     req.on('error', reject);
   });
+}
+
+// --- Admin-wachtwoord -------------------------------------------------------
+// Bij elke start gevraagd. Elk apparaat begint vergrendeld en wordt pas
+// ontgrendeld als het wachtwoord dáár is ingevuld — dus per apparaat.
+// Dit is een zachte lock: de server kent het wachtwoord, maar het afdwingen
+// gebeurt in de browser, en over http gaat het onversleuteld over je netwerk.
+
+let adminPassword = '';
+
+// Vraag het wachtwoord zonder het op het scherm te zetten.
+function askPassword(prompt) {
+  return new Promise((resolve) => {
+    const rl = createInterface({ input: process.stdin, output: process.stdout, terminal: true });
+    // Onderdruk de echo: herteken alleen de prompt, nooit de ingetikte tekens.
+    rl._writeToOutput = (s) => {
+      if (rl.muted) rl.output.write(`\x1B[2K\x1B[200D${prompt}`);
+      else rl.output.write(s);
+    };
+    rl.question(prompt, (answer) => {
+      rl.output.write('\n');
+      rl.close();
+      resolve(String(answer).trim());
+    });
+    rl.muted = true;
+  });
+}
+
+async function initAdminPassword() {
+  // Geen terminal (achtergrond, launcher, script)? Dan kunnen we niets vragen;
+  // zonder deze uitweg zou de server hier blijven hangen bij het starten.
+  if (!process.stdin.isTTY) {
+    adminPassword = process.env.CUEGO_ADMIN_PASSWORD || '';
+    if (adminPassword) console.log('Admin-wachtwoord uit CUEGO_ADMIN_PASSWORD (geen terminal om te vragen).');
+    else console.log('Geen terminal en geen CUEGO_ADMIN_PASSWORD — apparaten starten onvergrendeld.');
+    return;
+  }
+  adminPassword = await askPassword('Admin-wachtwoord (leeg = geen vergrendeling): ');
+  console.log(adminPassword
+    ? 'Admin-wachtwoord ingesteld. Elk apparaat start vergrendeld tot het daar is ingevuld.'
+    : 'Geen admin-wachtwoord — apparaten starten onvergrendeld.');
 }
 
 // --- Gedeelde show ----------------------------------------------------------
@@ -396,8 +438,24 @@ const server = createServer(async (req, res) => {
     if (urlPath === '/api/ping') {
       json(res, 200, {
         cuego: true, version: 1, port: PORT, ips: lanIps(), tokenRequired: !!TOKEN,
+        adminLock: !!adminPassword, // apparaten starten dan vergrendeld
         osc: { enabled: oscListening, port: OSC_PORT },
       });
+      return;
+    }
+
+    // Admin-wachtwoord controleren om dít apparaat te ontgrendelen.
+    if (urlPath === '/api/unlock') {
+      if (req.method !== 'POST') { json(res, 405, { error: 'Gebruik POST' }); return; }
+      const body = await readJson(req).catch(() => null);
+      if (!body) { json(res, 400, { error: 'Ongeldige JSON' }); return; }
+      if (!adminPassword) { json(res, 200, { ok: true }); return; } // geen slot ingesteld
+      const ok = String(body.password || '') === adminPassword;
+      if (ok && body.deviceId) {
+        for (const c of appClients()) if (c.deviceId === body.deviceId) c.locked = false;
+        broadcastDevices();
+      }
+      json(res, ok ? 200 : 401, ok ? { ok: true } : { error: 'Onjuist wachtwoord' });
       return;
     }
 
@@ -644,6 +702,10 @@ function startOsc() {
     console.log(`OSC luistert op UDP ${OSC_PORT} — bv. /cue/3/start, /go, /panic`);
   });
 }
+
+// Eerst het wachtwoord vragen, dán pas luisteren: anders kan een apparaat al
+// verbinden voordat we weten of er een slot op zit.
+await initAdminPassword();
 
 server.listen(PORT, () => {
   console.log(`CueGo draait op http://localhost:${PORT}`);
