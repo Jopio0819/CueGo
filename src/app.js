@@ -1109,7 +1109,13 @@ function closeEq() {
 function bindEq() {
   $('eqBtn')?.addEventListener('click', openEq);
   document.querySelectorAll('[data-eq-close]').forEach((el) => el.addEventListener('click', closeEq));
-  $('eqFlatBtn')?.addEventListener('click', () => {
+  // Reset zit achter een bevestiging: één misklik zou anders je hele curve wissen.
+  $('eqFlatBtn')?.addEventListener('click', async () => {
+    if (eqIsVlak(cues.selected)) return; // niets te resetten
+    const doel = selection.size > 1 ? `van ${selection.size} cues` : `van "${cues.selected?.name}"`;
+    const ok = await customConfirm(`Weet je zeker dat je de equalizer ${doel} wilt resetten? Alle banden gaan terug naar 0 dB.`,
+      { title: 'Equalizer resetten', okLabel: 'Reset' });
+    if (!ok) return;
     applyToSelected((c) => { c.eq = EQ_BANDS.map(() => 0); engine.updateEq(c.id, c.eq); });
     persist();
     updateEqUi();

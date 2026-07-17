@@ -729,13 +729,10 @@ body.dragging .drop-overlay { display: flex; }
 }
 .eq-band-card.actief .eq-db { color: var(--accent); font-weight: 600; }
 
-.eq-actions {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  padding: 12px 20px 16px;
-}
-.eq-actions .settings-note { margin: 0; }
+/* Reset- en sluitknop naast elkaar in de kop */
+.eq-head-btns { display: flex; align-items: center; gap: 4px; }
+.eq-head-btns .modal-close { display: flex; align-items: center; justify-content: center; }
+.eq-bands { padding-bottom: 18px; }
 
 /* Korte melding rechtsonder (bv. een commando dat de showcomputer niet haalde) */
 .toast {

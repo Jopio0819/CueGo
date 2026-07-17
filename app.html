@@ -416,16 +416,17 @@ cuego.on('cuestart', e =&gt; console.log(e))</pre>
       <div class="modal-card eq-card" role="dialog" aria-modal="true" aria-labelledby="eqTitle">
         <div class="modal-head">
           <h2 id="eqTitle">Equalizer</h2>
-          <button class="modal-close" data-eq-close aria-label="Sluiten">×</button>
+          <div class="eq-head-btns">
+            <button id="eqFlatBtn" class="modal-close" title="Alles terug naar vlak" aria-label="Equalizer resetten">
+              <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 2.6-6.4" /><polyline points="3 4 3 9 8 9" /></svg>
+            </button>
+            <button class="modal-close" data-eq-close aria-label="Sluiten">×</button>
+          </div>
         </div>
         <div class="eq-graph-wrap">
           <canvas id="eqCanvas"></canvas>
         </div>
         <div class="eq-bands" id="eqBands"></div>
-        <div class="eq-actions">
-          <button id="eqFlatBtn" class="btn">Vlak (reset)</button>
-          <span class="settings-note">Sleep de punten in de grafiek · dubbelklik op een punt = die band terug naar 0 · ±12 dB · werkt direct door op een spelende cue</span>
-        </div>
       </div>
     </div>
 
