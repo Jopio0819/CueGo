@@ -1830,6 +1830,7 @@ function apiState() {
 // zijn toestand; die tonen we hier, zodat de balk en de voortgang meelopen.
 
 let showState = null;
+let showStateAt = 0; // wanneer we die toestand ontvingen — nodig om te interpoleren
 
 // Zijn wij een client die meekijkt i.p.v. afspeelt?
 function isFollower() {
@@ -1840,9 +1841,21 @@ function remoteCue(id) {
   return showState?.cues?.find((c) => c.id === id) || null;
 }
 
+// Positie van een cue op de showcomputer, NU. Pushes komen hooguit een paar keer
+// per seconde (en trager als die tab op de achtergrond staat); daartussen tellen
+// we zelf de verstreken tijd erbij op — anders staat de balk te stotteren.
+function remotePos(info) {
+  if (!info) return 0;
+  const basis = info.position || 0;
+  if (!info.playing) return basis; // gepauzeerd/stil → niets bijtellen
+  const verstreken = (performance.now() - showStateAt) / 1000;
+  const pos = basis + verstreken;
+  return info.duration ? Math.min(pos, info.duration) : pos;
+}
+
 // Werk de rijen en de afspeelbalk bij met de toestand van de showcomputer.
-// Bewust géén render(): dat bouwt de hele lijst opnieuw op, en dit komt een paar
-// keer per seconde binnen.
+// Bewust géén render(): dat bouwt de hele lijst opnieuw op, en dit draait een
+// paar keer per seconde.
 function applyRemotePlayback() {
   if (!showState) return;
   for (const cue of cues.cues) {
@@ -1853,7 +1866,7 @@ function applyRemotePlayback() {
     row.classList.toggle('paused', !!info?.paused);
     const fill = row.querySelector('[data-fill]');
     if (fill) {
-      const pct = info?.duration ? Math.min(1, info.position / info.duration) * 100 : 0;
+      const pct = info?.duration ? Math.min(1, remotePos(info) / info.duration) * 100 : 0;
       fill.style.width = `${pct}%`;
     }
   }
@@ -1862,14 +1875,30 @@ function applyRemotePlayback() {
   const playing = showState.cues?.find((c) => c.playing || c.paused);
   const info = playing || remoteCue(cues.selected?.id);
   if (!info) return;
+  const pos = remotePos(info);
   tpName.textContent = info.name;
-  tpCurrent.textContent = fmtTime(info.position);
+  tpCurrent.textContent = fmtTime(pos);
   tpDuration.textContent = fmtTime(info.duration);
   if (!seeking) {
-    seekEl.value = info.duration ? Math.round((info.position / info.duration) * 1000) : 0;
+    seekEl.value = info.duration ? Math.round((pos / info.duration) * 1000) : 0;
     updateSeekFill();
   }
   setPlayIcon(!!info.playing);
+}
+
+// Eigen klokje van de meekijker: laat de balk dóórlopen tussen twee pushes in.
+// Stopt vanzelf zodra er niets meer speelt (of wij zelf de showcomputer worden).
+let followTimer = null;
+function startFollowTicker() {
+  if (followTimer) return;
+  followTimer = setInterval(() => {
+    if (!isFollower() || !showState?.cues?.some((c) => c.playing)) {
+      clearInterval(followTimer);
+      followTimer = null;
+      return;
+    }
+    applyRemotePlayback();
+  }, 150);
 }
 
 // Korte melding rechtsonder. Geen dialoog: dit mag een show nooit blokkeren,
@@ -2368,7 +2397,13 @@ async function initServerDetection() {
       on: control.on, // pusht de toestand pas ná een render (niet halverwege een async dispatch)
       onStatus: ({ connected }) => { linkConnected = connected; updateControlTab(); },
       onShow: (show) => { applyShow(show); }, // andere client wijzigde de show
-      onState: (st) => { showState = st; applyRemotePlayback(); }, // afspeelbalk volgt de showcomputer
+      // Afspeelbalk volgt de showcomputer; het klokje overbrugt de gaten tussen pushes.
+      onState: (st) => {
+        showState = st;
+        showStateAt = performance.now();
+        applyRemotePlayback();
+        if (st?.cues?.some((c) => c.playing)) startFollowTicker();
+      },
       label: deviceLabel(), // gaat meteen mee bij het verbinden
       isLocked: () => locked, // gaat mee in het levensteken
       onLock: (lockIt) => { if (lockIt !== locked) setLocked(lockIt); }, // op afstand (ont)grendeld
