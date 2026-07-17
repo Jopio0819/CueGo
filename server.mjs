@@ -303,6 +303,22 @@ let lastState = null; // laatst bekende toestand van de showcomputer
 // blijft hangen — dan zou je showcomputer een spook worden en GO nergens landen.
 let appSeq = 0;
 let primaryDeviceId = null;
+// De rol die de gebruiker ooit expliciet koos, overleeft een herstart. Zonder dit
+// pakt na elke herstart (ook een update!) de eerste de beste client de rol — en
+// een apparaat dat speelt zonder de rol te hebben, wordt door niemand gevolgd.
+const PREF_FILE = join(SHOW_DIR, 'server-state.json');
+let preferredShowDeviceId = null;
+let userChoseThisBoot = false;
+
+async function loadPreferredShow() {
+  try { preferredShowDeviceId = JSON.parse(await readFile(PREF_FILE, 'utf8')).showDeviceId || null; }
+  catch { /* nog geen voorkeur */ }
+}
+function savePreferredShow() {
+  mkdir(SHOW_DIR, { recursive: true })
+    .then(() => writeFile(PREF_FILE, JSON.stringify({ showDeviceId: preferredShowDeviceId })))
+    .catch(() => { /* niet kunnen bewaren is geen ramp */ });
+}
 
 // Een open TCP-verbinding bewijst niet dat er iemand thuis is: een bevroren of
 // bfcached tab houdt 'm open terwijl er niets meer draait. Zonder deze check kan
@@ -349,8 +365,18 @@ function touchDevice(deviceId) {
     seen = true;
   }
   if (wokeUp) {
-    // Eerste levensteken. Is er nog geen showcomputer, dan wordt dit 'm.
-    if (!primaryApp()) primaryDeviceId = deviceId;
+    const label = () => appClients().find((c) => c.deviceId === deviceId)?.label || deviceId.slice(0, 8);
+    if (!primaryApp()) {
+      // Eerste levensteken. Is er nog geen showcomputer, dan wordt dit 'm.
+      primaryDeviceId = deviceId;
+      console.log(`Showcomputer is nu: ${label()} (eerste levende client)`);
+    } else if (!userChoseThisBoot && preferredShowDeviceId === deviceId && primaryDeviceId !== deviceId) {
+      // Het apparaat dat de gebruiker ooit als showcomputer koos komt terug, en
+      // de huidige rol is maar een automatische noodgreep → voorkeur wint.
+      primaryDeviceId = deviceId;
+      lastState = null;
+      console.log(`Showcomputer hersteld naar voorkeursapparaat: ${label()}`);
+    }
     broadcastDevices();
   }
   return seen;
@@ -408,8 +434,27 @@ function setShowComputer(deviceId) {
   if (!liveApps().some((c) => c.deviceId === deviceId)) return false; // nooit aan een dode client
   primaryDeviceId = deviceId;
   lastState = null; // toestand van de vórige showcomputer is niet meer geldig
+  // Expliciete keuze van de gebruiker: onthouden, ook voorbij een herstart.
+  userChoseThisBoot = true;
+  preferredShowDeviceId = deviceId;
+  savePreferredShow();
+  const label = appClients().find((c) => c.deviceId === deviceId)?.label || deviceId.slice(0, 8);
+  console.log(`Showcomputer is nu: ${label}`);
   broadcastDevices();
   return true;
+}
+
+// Gooit een geweigerde state-push in de log — maar hooguit eens per 10s per
+// afzender, want een scheve client pusht een paar keer per seconde.
+const stateRejectLog = new Map();
+function logStateReject(body) {
+  const key = String(body.appId ?? '?');
+  const now = Date.now();
+  if (now - (stateRejectLog.get(key) || 0) < 10000) return;
+  stateRejectLog.set(key, now);
+  const speelt = (body.state?.cues || []).filter((c) => c.playing).length;
+  const wie = appClients().find((c) => c.appId === body.appId);
+  console.log(`State-push geweigerd van ${wie?.label || `appId ${key}`}${speelt ? ` (speelt ${speelt} cue(s)!)` : ''} — die client denkt showcomputer te zijn, de server niet.`);
 }
 
 function sseSend(client, event, data) {
@@ -545,6 +590,7 @@ function openSse(req, res, role, deviceId, label) {
     if (next) {
       primaryDeviceId = next.deviceId;
       lastState = null;
+      console.log(`Showcomputer weggevallen; rol naar: ${next.label || next.deviceId.slice(0, 8)}`);
       broadcastDevices();
       return;
     }
@@ -607,7 +653,11 @@ const server = createServer(async (req, res) => {
         }
         if (changed) broadcastDevices();
       }
-      json(res, 200, { ok: true, known });
+      // De rol gaat mee terug: rolwissels lopen via eenmalige events, en een
+      // client die er net één mist (reconnect, bevroren tab) zou anders vóórgoed
+      // denken dat hij geen showcomputer is — en dus nooit zijn toestand pushen.
+      // Zo herstelt dat zichzelf binnen één hartslag.
+      json(res, 200, { ok: true, known, primary: body.deviceId === primaryDeviceId });
       return;
     }
 
@@ -764,7 +814,11 @@ const server = createServer(async (req, res) => {
       // Alleen de showcomputer bepaalt de toestand. Zonder dit overschrijft een
       // tweede client de show en flikkert elke remote heen en weer.
       const show = primaryApp();
-      if (!show || body.appId !== show.appId) { json(res, 200, { ok: true, ignored: 'niet de showcomputer' }); return; }
+      if (!show || body.appId !== show.appId) {
+        logStateReject(body); // dit hoort zeldzaam te zijn; gebeurt het structureel, dan zit een client scheef
+        json(res, 200, { ok: true, ignored: 'niet de showcomputer' });
+        return;
+      }
       lastState = body.state;
       broadcast('remote', 'state', lastState);
       // Ook naar de andere clients: die spelen zelf niets af, maar moeten wél de
@@ -858,6 +912,7 @@ function openBrowser(url) {
 // al verbinden voordat we weten of er een slot op zit.
 if (!(await maybeUpdate())) {
   await ensureCuegoCommand();
+  await loadPreferredShow(); // gekozen showcomputer overleeft een herstart
   await initAdminPassword();
 
   server.listen(PORT, () => {

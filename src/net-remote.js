@@ -62,7 +62,19 @@ export function connectAppLink({ dispatch, getState, on, onStatus, onShow, onDev
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ deviceId: deviceId(), locked: !!isLocked?.() }),
-    }).catch(() => {});
+    })
+      .then((r) => r.json())
+      .then((info) => {
+        // De server is de baas over wie de showcomputer is. Rolwissels komen als
+        // eenmalige events; wie er net één miste zou anders eeuwig scheef blijven
+        // staan — en als 'onterechte volger' nooit zijn afspeelstand pushen.
+        if (info && typeof info.primary === 'boolean' && info.primary !== isPrimary) {
+          isPrimary = info.primary;
+          onStatus?.({ connected: true, primary: isPrimary });
+          if (isPrimary) pushState(true); // wij blijken de bron van waarheid → meteen pushen
+        }
+      })
+      .catch(() => {});
   }
 
   function pushState(force = false) {
