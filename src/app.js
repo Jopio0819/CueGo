@@ -277,6 +277,8 @@ function setProjectName(name) {
 function updateProjectTitle() {
   const el = $('projectTitle');
   if (el.getAttribute('contenteditable') !== 'true') el.textContent = projectName;
+  // Tabtitel volgt de show, zodat je met meerdere vensters ziet welke welke is.
+  document.title = projectName && projectName !== 'Naamloos' ? `${projectName} - CueGo` : 'CueGo';
 }
 
 function bindProjectTitle() {
@@ -1087,6 +1089,8 @@ function applyLockState() {
   lockBtn.querySelector('.ic-locked').hidden = !locked;
   lockBtn.querySelector('.ic-unlocked').hidden = locked;
   syncCueMidi(); // trigger-veld hangt van lock én MIDI-status af
+  updateLockSettingsUI(); // ook bij vergrendelen vanaf een ander apparaat
+  renderDevices(); // (ont)grendel-knoppen volgen onze eigen lock-status
   render(); // draggable-status van rijen bijwerken
 }
 
@@ -1181,13 +1185,50 @@ function syncSettingsForm() {
   renderDevices();
 }
 
-// Toon de vergrendel-status en de instellen/verwijderen-knop in de instellingen.
+// Toon de vergrendel-status, het ontgrendel-blok en de instellen/verwijderen-knop.
 function updateLockSettingsUI() {
   const has = hasPassword();
   $('lockStatusNote').textContent = has
     ? 'Er is een wachtwoord ingesteld. Gebruik het slot in de balk om te (ont)grendelen.'
     : 'Stel een wachtwoord in om bewerkingen te kunnen vergrendelen.';
   $('passwordBtn').textContent = has ? 'Wachtwoord verwijderen…' : 'Wachtwoord instellen…';
+
+  // Vergrendeld? Dan hier ontgrendelen. Zonder wachtwoord (bv. vergrendeld vanaf
+  // het Multi-device-paneel) valt er niets te controleren — dan zou je muurvast
+  // zitten, dus is één klik genoeg.
+  const section = $('unlockSection');
+  if (!section) return;
+  section.hidden = !locked;
+  if (!locked) { $('unlockError').hidden = true; $('unlockInput').value = ''; return; }
+
+  $('unlockNote').textContent = has
+    ? 'Dit apparaat is vergrendeld. Voer het wachtwoord in om bewerken vrij te geven.'
+    : 'Dit apparaat is vergrendeld vanaf een ander apparaat. Er is hier geen wachtwoord ingesteld.';
+  $('unlockInput').hidden = !has;
+}
+
+async function tryUnlock() {
+  const input = $('unlockInput');
+  const err = $('unlockError');
+  if (hasPassword() && !(await checkPassword(input.value))) {
+    err.textContent = 'Onjuist wachtwoord.';
+    err.hidden = false;
+    input.select();
+    return;
+  }
+  input.value = '';
+  err.hidden = true;
+  setLocked(false); // roept applyLockState → updateLockSettingsUI
+}
+
+function bindUnlock() {
+  const btn = $('unlockBtn');
+  if (!btn) return;
+  btn.addEventListener('click', tryUnlock);
+  $('unlockInput').addEventListener('keydown', (e) => {
+    e.stopPropagation(); // niet de globale sneltoetsen triggeren tijdens typen
+    if (e.key === 'Enter') { e.preventDefault(); tryUnlock(); }
+  });
 }
 
 function applySingleCueBadge() { modeBadge.hidden = !settings.singleCueMode; }
@@ -2504,6 +2545,7 @@ bindInspector();
 bindSettings();
 bindMidiSettings();
 bindDevices();
+bindUnlock();
 bindCueMidi();
 bindSwitchBlur();
 bindProjectTitle();

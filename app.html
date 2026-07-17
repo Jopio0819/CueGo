@@ -260,6 +260,15 @@
 
           <div class="tab-panel" data-panel="security" hidden>
             <p class="settings-note">Vergrendel bewerkingen tijdens een show. Afspelen blijft gewoon werken; toevoegen, verwijderen, herordenen en de inspector gaan op slot.</p>
+            <div class="settings-lock" id="unlockSection" hidden>
+              <p class="settings-note" id="unlockNote"></p>
+              <div class="unlock-row">
+                <input id="unlockInput" type="password" placeholder="Wachtwoord" autocomplete="current-password" />
+                <button id="unlockBtn" class="btn primary">Ontgrendel</button>
+              </div>
+              <p class="settings-note error" id="unlockError" hidden></p>
+            </div>
+
             <div class="settings-lock">
               <p id="lockStatusNote" class="settings-note"></p>
               <button id="passwordBtn" class="btn">Wachtwoord instellen…</button>

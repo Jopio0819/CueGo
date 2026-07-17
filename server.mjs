@@ -563,7 +563,10 @@ const server = createServer(async (req, res) => {
       if (!body || !body.state) { json(res, 400, { error: 'Verwacht { appId, state }' }); return; }
       // Alleen de actieve app bepaalt de toestand. Zonder dit overschrijft een
       // tweede open tab de show en flikkert elke remote heen en weer.
-      if (body.appId !== primaryAppId) { json(res, 200, { ok: true, ignored: 'niet de actieve app' }); return; }
+      // Alleen de showcomputer bepaalt de toestand. Zonder dit overschrijft een
+      // tweede client de show en flikkert elke remote heen en weer.
+      const show = primaryApp();
+      if (!show || body.appId !== show.appId) { json(res, 200, { ok: true, ignored: 'niet de showcomputer' }); return; }
       lastState = body.state;
       broadcast('remote', 'state', lastState);
       // Ook naar de andere clients: die spelen zelf niets af, maar moeten wél de

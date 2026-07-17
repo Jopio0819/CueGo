@@ -93,6 +93,34 @@
       .btn-secondary:hover { border-color: var(--muted); background: var(--panel); }
       .hero .note { margin-top: 18px; color: var(--faint); font-size: 13px; }
 
+      /* Zelf hosten: commando om te kopiëren */
+      .selfhost {
+        max-width: 680px; margin: 46px auto 0; padding: 22px 20px;
+        background: var(--panel); border: 1px solid var(--line); border-radius: 14px;
+      }
+      .selfhost-title { margin: 0 0 4px; font-size: 15px; font-weight: 600; }
+      .selfhost-sub { margin: 0 0 14px; color: var(--muted); font-size: 13px; }
+      .selfhost-sub a { color: var(--accent); }
+      .cmd {
+        display: flex; align-items: center; gap: 10px;
+        background: var(--bg); border: 1px solid var(--line-strong); border-radius: 10px;
+        padding: 10px 10px 10px 14px; text-align: left;
+      }
+      .cmd code {
+        flex: 1; min-width: 0; overflow-x: auto; white-space: nowrap;
+        font: 12.5px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        color: var(--text);
+      }
+      .cmd button {
+        flex: none; cursor: pointer; font: inherit; font-size: 12px; font-weight: 600;
+        color: var(--muted); background: var(--panel-2); border: 1px solid var(--line-strong);
+        border-radius: 7px; padding: 6px 12px; transition: color .12s, border-color .12s;
+      }
+      .cmd button:hover { color: var(--text); border-color: var(--muted); }
+      .cmd button.copied { color: var(--play); border-color: var(--play); }
+      .selfhost-hint { margin: 12px 0 0; color: var(--faint); font-size: 12px; }
+      .selfhost-hint code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; color: var(--muted); }
+
       /* Features */
       .features {
         display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px;
@@ -151,6 +179,16 @@
           <a class="btn-secondary" href="https://github.com/Jopio0819/cuego" target="_blank" rel="noopener">Source code</a>
         </div>
         <p class="note">Runs locally in your browser — no account, no internet needed during your show.</p>
+
+        <div class="selfhost">
+          <p class="selfhost-title">Or host it yourself</p>
+          <p class="selfhost-sub">Unlocks the network remote, OSC, and a shared show across every device. Needs <a href="https://nodejs.org" target="_blank" rel="noopener">Node</a> — no other install, no dependencies.</p>
+          <div class="cmd">
+            <code id="cmd">git clone https://github.com/Jopio0819/cuego.git &amp;&amp; cd cuego &amp;&amp; node server.mjs</code>
+            <button id="copyCmd" type="button" aria-label="Copy command">Copy</button>
+          </div>
+          <p class="selfhost-hint">Then open <code>http://localhost:4321</code> — it goes straight into the player.</p>
+        </div>
       </header>
 
       <section class="features">
@@ -199,5 +237,27 @@
         CueGo · built for reliable live audio · <a href="https://github.com/Jopio0819/cuego" target="_blank" rel="noopener">github.com/Jopio0819/cuego</a>
       </footer>
     </div>
+
+    <script>
+      // Commando kopiëren. clipboard.writeText vereist een secure context; op
+      // http valt 'ie terug op selecteren, zodat de knop nooit stil niets doet.
+      const btn = document.getElementById('copyCmd');
+      const code = document.getElementById('cmd');
+      btn.addEventListener('click', async () => {
+        const text = code.textContent.trim();
+        try {
+          await navigator.clipboard.writeText(text);
+        } catch {
+          const r = document.createRange();
+          r.selectNodeContents(code);
+          const sel = getSelection();
+          sel.removeAllRanges();
+          sel.addRange(r);
+        }
+        btn.textContent = 'Copied';
+        btn.classList.add('copied');
+        setTimeout(() => { btn.textContent = 'Copy'; btn.classList.remove('copied'); }, 1600);
+      });
+    </script>
   </body>
 </html>
