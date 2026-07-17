@@ -1076,6 +1076,7 @@ function setLocked(v) {
   locked = v;
   localStorage.setItem(LOCKED_KEY, v ? '1' : '0');
   applyLockState();
+  appLink?.beat?.(); // status meteen doorgeven, niet pas bij de volgende ping
 }
 function applyLockState() {
   document.body.classList.toggle('locked', locked);
@@ -1868,6 +1869,23 @@ function applyRemotePlayback() {
   setPlayIcon(!!info.playing);
 }
 
+// Korte melding rechtsonder. Geen dialoog: dit mag een show nooit blokkeren,
+// maar stil mislukken mag het al helemaal niet.
+let toastTimer = null;
+function showToast(msg) {
+  let el = $('toast');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'toast';
+    el.className = 'toast';
+    document.body.appendChild(el);
+  }
+  el.textContent = msg;
+  el.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove('show'), 4000);
+}
+
 // Commando's die geluid maken. Is een ándere client de showcomputer, dan gaan
 // deze daarheen i.p.v. hier af te spelen. (`transition` niet: die opent eerst een
 // prompt, en die hoort op het scherm te blijven waar je 'm intikt.)
@@ -1888,11 +1906,21 @@ function forwardCommand(cmd, args) {
     render();
     syncInspector();
   }
+  // deviceId meesturen: dan weet de server dat dit een eigen client is en geen
+  // remote van buitenaf (die valt onder de 'afstandsbediening uit'-blokkade).
   fetch('api/command', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ cmd, args: payload }),
-  }).catch(() => console.warn('Commando naar de showcomputer sturen mislukt'));
+    body: JSON.stringify({ cmd, args: payload, deviceId: deviceId() }),
+  })
+    .then(async (res) => {
+      if (res.ok) return;
+      // Niet stil laten mislukken: een GO die nergens landt is in een show het
+      // ergste wat er kan gebeuren.
+      const info = await res.json().catch(() => ({}));
+      showToast(info.error || `Commando "${cmd}" is niet aangekomen bij de showcomputer.`);
+    })
+    .catch(() => showToast('Geen verbinding met de showcomputer.'));
   return true;
 }
 

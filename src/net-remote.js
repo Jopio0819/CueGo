@@ -190,5 +190,7 @@ export function connectAppLink({ dispatch, getState, on, onStatus, onShow, onDev
 
   start();
   // appId identificeert deze tab bij de server (afzender van show-wijzigingen).
-  return { stop, pushState, appId: () => appId, isPrimary: () => isPrimary };
+  // beat: meteen een levensteken sturen, bv. als onze lock-status net veranderde
+  // — anders loopt het Multi-device-paneel tot 8s achter.
+  return { stop, pushState, beat, appId: () => appId, isPrimary: () => isPrimary };
 }

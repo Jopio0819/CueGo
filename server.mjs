@@ -470,8 +470,16 @@ const server = createServer(async (req, res) => {
       const body = await readJson(req).catch(() => null);
       if (!body?.deviceId) { json(res, 400, { error: 'deviceId ontbreekt' }); return; }
       const known = touchDevice(body.deviceId);
+      // De client vertelt hier ook of hij vergrendeld is. Verandert dat, dan moeten
+      // de panelen het horen — anders tonen die de verkeerde knop (Vergrendel op
+      // een al vergrendeld apparaat).
       if (body.locked != null) {
-        for (const c of appClients()) if (c.deviceId === body.deviceId) c.locked = !!body.locked;
+        let changed = false;
+        for (const c of appClients()) {
+          if (c.deviceId !== body.deviceId) continue;
+          if (!!c.locked !== !!body.locked) { c.locked = !!body.locked; changed = true; }
+        }
+        if (changed) broadcastDevices();
       }
       json(res, 200, { ok: true, known });
       return;
@@ -607,13 +615,18 @@ const server = createServer(async (req, res) => {
     if (urlPath === '/api/command') {
       if (req.method !== 'POST') { json(res, 405, { error: 'Gebruik POST' }); return; }
       if (!tokenOk(url)) { json(res, 401, { error: 'Ongeldig token' }); return; }
-      // De app bepaalt of afstandsbediening mag; dat staat in de toestand die hij pusht.
-      if (lastState && lastState.remoteEnabled === false) {
+      const body = await readJson(req).catch(() => null);
+      if (!body || !body.cmd) { json(res, 400, { error: 'Verwacht { cmd, args }' }); return; }
+
+      // "Afstandsbediening uit" is bedoeld tegen telefoons/OSC van buitenaf, niet
+      // tegen je eigen CueGo-clients: die tonen dezelfde show en sturen hun GO
+      // alleen door omdat zij niet de showcomputer zijn. Een client identificeert
+      // zich met z'n deviceId; alleen echte remotes vallen onder de blokkade.
+      const fromOwnClient = body.deviceId && appClients().some((c) => c.deviceId === body.deviceId);
+      if (!fromOwnClient && lastState && lastState.remoteEnabled === false) {
         json(res, 403, { error: 'Afstandsbediening staat uit' });
         return;
       }
-      const body = await readJson(req).catch(() => null);
-      if (!body || !body.cmd) { json(res, 400, { error: 'Verwacht { cmd, args }' }); return; }
       json(res, 200, { ok: true, delivered: sendCommand(body.cmd, body.args) });
       return;
     }

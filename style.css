@@ -624,6 +624,28 @@ body.dragging .drop-overlay { display: flex; }
 .recent-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
 .recent-meta { color: var(--faint); font-size: 11px; flex: none; }
 
+/* Korte melding rechtsonder (bv. een commando dat de showcomputer niet haalde) */
+.toast {
+  position: fixed;
+  right: 18px;
+  bottom: 84px;
+  z-index: 90;
+  max-width: 340px;
+  padding: 11px 15px;
+  border-radius: 10px;
+  background: var(--panel);
+  border: 1px solid var(--danger, #e2564a);
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.45;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+  opacity: 0;
+  transform: translateY(8px);
+  pointer-events: none;
+  transition: opacity 0.18s ease, transform 0.18s ease;
+}
+.toast.show { opacity: 1; transform: none; }
+
 /* Multi-device: verbonden clients + wie het geluid afspeelt */
 .device-list { display: flex; flex-direction: column; gap: 6px; margin: 8px 0 14px; }
 .device-row {
