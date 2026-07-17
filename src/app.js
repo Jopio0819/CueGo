@@ -683,8 +683,12 @@ function fmtTime(sec) {
 }
 
 function setPlayIcon(isPlaying) {
-  playPauseBtn.querySelector('.ic-play').hidden = isPlaying;
-  playPauseBtn.querySelector('.ic-pause').hidden = !isPlaying;
+  // Let op: een <svg> reflecteert de .hidden-PROPERTY niet naar het hidden-
+  // ATTRIBUUT (dat doet alleen HTMLElement). `svg.hidden = true` zet dus enkel
+  // een dode JS-property en verbergt niks — daarom wisselde dit icoon nooit.
+  // toggleAttribute zet het echte attribuut, waar [hidden]{display:none} op grijpt.
+  playPauseBtn.querySelector('.ic-play').toggleAttribute('hidden', isPlaying);
+  playPauseBtn.querySelector('.ic-pause').toggleAttribute('hidden', !isPlaying);
 }
 
 // Vul het afgespeelde deel van de seek-slider (0..1000 → %).
@@ -1393,8 +1397,9 @@ function applyLockState() {
   lockBtn.hidden = !hasPassword() && !adminLock;
   lockBtn.classList.toggle('locked-on', locked);
   lockBtn.title = locked ? 'Ontgrendelen (bewerken is vergrendeld)' : 'Vergrendelen';
-  lockBtn.querySelector('.ic-locked').hidden = !locked;
-  lockBtn.querySelector('.ic-unlocked').hidden = locked;
+  // Ook SVG's: zet het attribuut, niet de (op SVG niet-reflecterende) property.
+  lockBtn.querySelector('.ic-locked').toggleAttribute('hidden', !locked);
+  lockBtn.querySelector('.ic-unlocked').toggleAttribute('hidden', locked);
   syncCueMidi(); // trigger-veld hangt van lock én MIDI-status af
   applyLockToSections(); // grijs wat je nu toch niet kunt bewerken
   updateLockSettingsUI(); // ook bij vergrendelen vanaf een ander apparaat
