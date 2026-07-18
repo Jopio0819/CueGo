@@ -3070,7 +3070,7 @@ function updateControlTab() {
     const hosts = (serverInfo.ips || []).length ? serverInfo.ips : [location.hostname];
     urls.innerHTML = '';
     for (const ip of hosts) {
-      const href = `http://${ip}:${port}/remote.html`;
+      const href = `${location.protocol}//${ip}:${port}/remote.html`;
       const a = document.createElement('a');
       a.className = 'remote-url';
       a.href = href;

@@ -633,7 +633,7 @@ const handleRequest = async (req, res) => {
     // server-afhankelijke opties (netwerk-remote, OSC) getoond worden.
     if (urlPath === '/api/ping') {
       json(res, 200, {
-        cuego: true, version: 1, port: PORT, ips: lanIps(), httpsPort: httpsActive ? HTTPS_PORT : null,
+        cuego: true, version: 1, port: PORT, ips: lanIps(), secure: serving === 'https', httpsPort: serving === 'https' ? PORT : null,
         adminLock: !!adminPassword, // apparaten starten dan vergrendeld
         osc: { enabled: oscListening, port: OSC_PORT },
       });
@@ -878,16 +878,15 @@ const handleRequest = async (req, res) => {
   }
 };
 
-const server = createServer(handleRequest);
-
-// --- Https (voor MIDI e.d. op andere apparaten) -----------------------------
+// --- Https op de hoofdpoort -------------------------------------------------
 // Web MIDI en consorten vereisen een secure context, en http://<lan-ip> is dat
-// nooit. Daarom praat CueGo óók https, met een zelfgemaakt certificaat (puur
-// Node — zie cert.mjs). Eén keer per apparaat de browserwaarschuwing accepteren
-// en dat apparaat is 'm voorgoed: een volwaardige secure context.
-const HTTPS_PORT = process.env.CUEGO_HTTPS_PORT ? Number(process.env.CUEGO_HTTPS_PORT) : 4322;
+// nooit. Daarom serveert CueGo standaard https, met een zelfgemaakt certificaat
+// (puur Node — zie cert.mjs), op dezelfde poort (4321). Eén keer per apparaat de
+// browserwaarschuwing accepteren en dat apparaat is 'm voorgoed: een volwaardige
+// secure context. Lukt het certificaat onverhoopt niet, dan valt de server terug
+// op http zodat een show nooit strandt op een certificaat-fout.
 const CERT_DIR = join(ROOT, 'cert');
-let httpsActive = false;
+let serving = 'http'; // wordt 'https' zodra het certificaat er is
 
 async function ensureCertFiles() {
   const ips = ['127.0.0.1', ...lanIps()];
@@ -915,24 +914,16 @@ async function ensureCertFiles() {
   return { key: Buffer.from(key), cert: Buffer.from(cert) };
 }
 
-async function startHttps() {
+// Bouw de hoofdserver: https met het zelfgemaakte certificaat, of http als het
+// certificaat niet te maken is (dan start de show tenminste).
+async function makeServer() {
   try {
     const { key, cert } = await ensureCertFiles();
-    const httpsServer = createHttpsServer({ key, cert }, handleRequest);
-    httpsServer.requestTimeout = 15000;
-    httpsServer.headersTimeout = 16000;
-    httpsServer.on('error', (err) => console.log(`Https niet gestart: ${err.message} — http blijft gewoon werken.`));
-    httpsServer.listen(HTTPS_PORT, () => {
-      httpsActive = true;
-      const ips = lanIps();
-      if (ips.length) {
-        console.log(`Met MIDI (https): ${ips.map((ip) => `https://${ip}:${HTTPS_PORT}`).join('  ')}`);
-        console.log('  eerste keer per apparaat: waarschuwing accepteren (Geavanceerd → Doorgaan).');
-      }
-    });
+    serving = 'https';
+    return createHttpsServer({ key, cert }, handleRequest);
   } catch (err) {
-    // Https is een extraatje; een start mag er nooit op stranden.
-    console.log(`Https niet beschikbaar (${err.message}) — http blijft gewoon werken.`);
+    console.log(`Https-certificaat niet beschikbaar (${err.message}) — val terug op http.`);
+    return createServer(handleRequest);
   }
 }
 
@@ -996,20 +987,21 @@ if (!(await maybeUpdate())) {
   // POST stilvalt) bleef anders tot 5 minuten hangen — en alle vólgende verzoeken
   // over dezelfde verbinding wachtten erachter in de rij: het beruchte 'pending'.
   // Na 15s kappen we zo'n verzoek af; de browser begint dan gewoon opnieuw.
+  const server = await makeServer();
   server.requestTimeout = 15000;
   server.headersTimeout = 16000;
 
   server.listen(PORT, () => {
-    console.log(`CueGo draait op http://localhost:${PORT}`);
+    console.log(`CueGo draait op ${serving}://localhost:${PORT}`);
     const ips = lanIps();
     if (ips.length) {
-      console.log(`Afstandsbediening: ${ips.map((ip) => `http://${ip}:${PORT}/remote.html`).join('  ')}`);
+      console.log(`Afstandsbediening: ${ips.map((ip) => `${serving}://${ip}:${PORT}/remote.html`).join('  ')}`);
     }
+    if (serving === 'https') console.log('Eerste keer per apparaat: browserwaarschuwing accepteren (Geavanceerd → Doorgaan).');
     if (adminPassword) console.log('Remotes vragen om het admin-wachtwoord.');
     else if (ips.length) console.log('Let op: zonder admin-wachtwoord kan iedereen op dit netwerk de show bedienen.');
     if (adminPassword && !oscEnabled()) console.log('OSC uit: OSC kent geen wachtwoord. Toch aanzetten? CUEGO_OSC=on');
     startOsc();
-    startHttps();
-    openBrowser(`http://localhost:${PORT}`);
+    openBrowser(`${serving}://localhost:${PORT}`);
   });
 }

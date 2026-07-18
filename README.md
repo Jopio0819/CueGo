@@ -14,8 +14,11 @@ git clone https://github.com/Jopio0819/cuego.git && cd cuego && node setup.mjs
 
 After that, just type `cuego` from any directory (new terminal). The server installs that command
 on every start — an alias in your shell profile on macOS/Linux, a `cuego.cmd` in WindowsApps on
-Windows — so existing clones get it too. Then open **http://localhost:4321** (Chrome or Edge
-recommended).
+Windows — so existing clones get it too. Then open **https://localhost:4321** (Chrome or Edge
+recommended). CueGo serves over HTTPS so MIDI and multi-device work from any device on the network;
+the first time on each device, accept the one-off self-signed certificate warning (Advanced →
+Proceed). If the certificate can't be created for some reason, it falls back to http so the show
+still starts.
 Running locally takes you **straight into the player** — the landing page is only for the public
 static site.
 
@@ -121,10 +124,9 @@ Message types: **Note On**, **Control Change** and **Program Change**, each with
 command and never two. A button already in use gets *moved* to its new binding (across workspace
 actions and cue triggers alike), so one button never fires two things.
 
-Bindings are stored per browser. Chrome/Edge only, and needs a secure context. On the machine
-running the server that's just `localhost`; on **other devices** open CueGo over the built-in
-**https** instead (see below) and MIDI works there too. On a plain-http origin CueGo hides the
-switch and points you to the https URL.
+Bindings are stored per browser. Chrome/Edge only, and needs a secure context. CueGo serves over
+**https** by default, so this is satisfied everywhere — on the show computer and on any other device
+on the network — after you accept the one-off certificate warning on that device.
 
 **Network remote** — only when running locally (`node server.mjs`). Open `remote.html` on a phone
 or tablet on the same network; the URL is shown under **Settings → Control**:
@@ -137,7 +139,7 @@ It has a big GO button, fade out, play/pause, prev/next and a tappable cue list 
 show live. Any program can drive CueGo the same way:
 
 ```bash
-curl -X POST http://localhost:4321/api/command \
+curl -k -X POST https://localhost:4321/api/command \
   -H 'Content-Type: application/json' -d '{"cmd":"go"}'
 ```
 
@@ -205,12 +207,13 @@ GitHub Pages tips: put the custom domain on the **project** repo's Pages setting
 
 Some features need a **secure context** (https or localhost): Web MIDI, the modern folder picker
 and the strongest password hashing. A LAN ip over plain http never qualifies — so when self-hosting,
-the server also speaks **https** on port 4322 with a self-signed certificate it generates itself
-(pure Node, nothing to install; kept in `cert/`). Open `https://<ip>:4322` on a device, accept the
-browser warning once (Advanced → Proceed), and that device is a full secure context from then on —
-the certificate is reused across restarts, so the warning really is one-time per device. The
-certificate covers the current LAN ip and is regenerated automatically when the ip changes or it
-nears expiry. Different port: `CUEGO_HTTPS_PORT=4443`.
+the server serves **https on the main port (4321)** with a self-signed certificate it generates
+itself (pure Node, nothing to install; kept in `cert/`). Open `https://localhost:4321` (or
+`https://<ip>:4321` on another device), accept the browser warning once (Advanced → Proceed), and
+that device is a full secure context from then on — the certificate is reused across restarts, so
+the warning really is one-time per device. It covers `localhost` and the current LAN ip, and is
+regenerated automatically when the ip changes or it nears expiry. If the certificate can't be
+created, the server falls back to http on the same port so a show never fails to start.
 
 ## Structure
 
