@@ -65,6 +65,13 @@ const browserStore = {
 
 // --- Op de eigen server (bestanden in projects/) ----------------------------
 
+// Bewerk-token (van /api/unlock) meesturen bij schrijfacties; de server dwingt het
+// slot daarmee af. Zonder admin-wachtwoord bestaat het niet en blijft alles open.
+function withToken(headers = {}) {
+  const t = sessionStorage.getItem('webqlab.editToken');
+  return t ? { ...headers, 'x-cuego-token': t } : headers;
+}
+
 const serverStore = {
   kind: 'server',
   async list() {
@@ -75,7 +82,7 @@ const serverStore = {
   async save(name, blob) {
     const res = await fetch(`api/projects/${encodeURIComponent(name)}`, {
       method: 'PUT',
-      headers: { 'Content-Type': 'application/octet-stream' },
+      headers: withToken({ 'Content-Type': 'application/octet-stream' }),
       body: blob,
     });
     if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Opslaan mislukt');
@@ -86,7 +93,7 @@ const serverStore = {
     return await res.blob();
   },
   async remove(name) {
-    await fetch(`api/projects/${encodeURIComponent(name)}`, { method: 'DELETE' });
+    await fetch(`api/projects/${encodeURIComponent(name)}`, { method: 'DELETE', headers: withToken() });
   },
 };
 

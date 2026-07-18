@@ -8,6 +8,13 @@
 // Op statische hosting (GitHub Pages) wordt hier niets van gebruikt: daar houdt
 // elk apparaat gewoon z'n eigen show.
 
+// Bewerk-token meesturen (van /api/unlock). De server dwingt het slot hiermee af;
+// zonder admin-wachtwoord bestaat het niet en blijft alles open.
+function withToken(headers = {}) {
+  const t = sessionStorage.getItem('webqlab.editToken');
+  return t ? { ...headers, 'x-cuego-token': t } : headers;
+}
+
 export async function fetchShow() {
   const res = await fetch('api/show', { cache: 'no-store' });
   if (!res.ok) throw new Error('Kon de show niet ophalen');
@@ -25,7 +32,7 @@ export async function pushShow(appId, cueMetas, name, single) {
   if (typeof single === 'boolean') payload.single = single;
   const res = await fetch('api/show', {
     method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
+    headers: withToken({ 'Content-Type': 'application/json' }),
     body: JSON.stringify(payload),
   });
   if (!res.ok) throw new Error('Kon de show niet opslaan');
@@ -35,7 +42,7 @@ export async function pushShow(appId, cueMetas, name, single) {
 export async function uploadAudio(id, file) {
   const res = await fetch(`api/audio/${encodeURIComponent(id)}`, {
     method: 'PUT',
-    headers: { 'Content-Type': 'application/octet-stream' },
+    headers: withToken({ 'Content-Type': 'application/octet-stream' }),
     body: file,
   });
   if (!res.ok) throw new Error(`Upload van "${file.name}" mislukt`);
@@ -59,5 +66,5 @@ export async function downloadAudio(id, name, type) {
 }
 
 export async function deleteAudio(id) {
-  await fetch(`api/audio/${encodeURIComponent(id)}`, { method: 'DELETE' }).catch(() => {});
+  await fetch(`api/audio/${encodeURIComponent(id)}`, { method: 'DELETE', headers: withToken() }).catch(() => {});
 }

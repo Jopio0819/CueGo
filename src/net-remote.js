@@ -127,7 +127,7 @@ export function connectAppLink({ dispatch, getState, on, onStatus, onShow, onDev
     es.addEventListener('lock', (e) => {
       let data;
       try { data = JSON.parse(e.data); } catch { return; }
-      onLock?.(!!data.locked);
+      onLock?.(!!data.locked, data.token);
     });
 
     // Afspeeltoestand van de showcomputer. Krijgen we alleen als wij het níét zijn:

@@ -24,6 +24,7 @@ import { createSocket } from 'node:dgram';
 import { createInterface } from 'node:readline';
 import { execFile, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
+import { randomBytes } from 'node:crypto';
 import { parseOsc, oscToCommand } from './osc.mjs';
 import { generateCert } from './cert.mjs';
 
@@ -565,6 +566,45 @@ function remoteAuthOk(url, body) {
   return given === adminPassword;
 }
 
+// --- Bewerk-rechten (server-side afgedwongen) -------------------------------
+// Het slot mag niet alleen client-side zijn (velden op `disabled` zijn via DevTools
+// weg te halen). Bij een juist admin-wachtwoord krijgt een apparaat een token; alle
+// bewerkende endpoints controleren dát token, niet wat de client over z'n eigen
+// lock-status beweert (dat is te vervalsen). Zonder admin-wachtwoord blijft alles open.
+const unlockTokens = new Map(); // token → deviceId
+
+function issueUnlockToken(deviceId) {
+  const token = randomBytes(24).toString('base64url');
+  unlockTokens.set(token, deviceId || null);
+  return token;
+}
+function revokeDeviceTokens(deviceId) {
+  for (const [t, dev] of unlockTokens) if (dev === deviceId) unlockTokens.delete(t);
+}
+// Mag deze request de gedeelde show/audio/projecten bewerken?
+function canEdit(req) {
+  if (!adminPassword) return true; // geen slot ingesteld → open, zoals altijd
+  const t = req.headers['x-cuego-token'];
+  return !!(t && unlockTokens.has(String(t)));
+}
+
+// Een vergrendeld apparaat mag alleen fade-in/uit en loop aan/uit van BESTAANDE cues
+// wijzigen. Neem de opgeslagen cues als waarheid en overlay enkel die velden; al het
+// andere (naam, nummer, volume, in/uit, toevoegen/verwijderen/herordenen, ...) valt weg.
+function mergeLockedCues(incoming, storedCues) {
+  const byId = new Map((incoming || []).map((c) => [c.id, c]));
+  return (storedCues || []).map((c) => {
+    const inc = byId.get(c.id);
+    if (!inc) return c;
+    return {
+      ...c,
+      fadeIn: Number.isFinite(+inc.fadeIn) ? +inc.fadeIn : c.fadeIn,
+      fadeOut: Number.isFinite(+inc.fadeOut) ? +inc.fadeOut : c.fadeOut,
+      loop: !!inc.loop,
+    };
+  });
+}
+
 function json(res, code, data) {
   res.writeHead(code, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' })
     .end(JSON.stringify(data));
@@ -699,11 +739,14 @@ const handleRequest = async (req, res) => {
       if (!body) { json(res, 400, { error: 'Ongeldige JSON' }); return; }
       if (!adminPassword) { json(res, 200, { ok: true }); return; } // geen slot ingesteld
       const ok = String(body.password || '') === adminPassword;
-      if (ok && body.deviceId) {
+      if (!ok) { json(res, 401, { error: 'Onjuist wachtwoord' }); return; }
+      if (body.deviceId) {
         for (const c of appClients()) if (c.deviceId === body.deviceId) c.locked = false;
         broadcastDevices();
       }
-      json(res, ok ? 200 : 401, ok ? { ok: true } : { error: 'Onjuist wachtwoord' });
+      // Token = het bewijs dat dit apparaat het wachtwoord kende. De client stuurt 'm
+      // mee bij bewerkingen; zo hangen de rechten niet aan de (vervalsbare) UI-status.
+      json(res, 200, { ok: true, token: issueUnlockToken(body.deviceId) });
       return;
     }
 
@@ -746,18 +789,29 @@ const handleRequest = async (req, res) => {
       }
 
       // Een ander apparaat op afstand (ont)grendelen vanuit het Multi-device-paneel.
+      // Dit is een beheeractie: alleen een ontgrendeld apparaat mag het.
       if (body.lockDeviceId != null && body.locked != null) {
+        if (!canEdit(req)) { json(res, 403, { error: 'Vergrendeld — geen apparaatbeheer' }); return; }
         const targets = appClients().filter((c) => c.deviceId === body.lockDeviceId);
         if (!targets.length) { json(res, 404, { error: 'Dat apparaat is niet (meer) verbonden' }); return; }
+        const lockIt = !!body.locked;
+        // Vergrendelen → token intrekken (echt geen bewerkrechten meer). Ontgrendelen
+        // via het paneel → een token uitgeven en meesturen, zodat dat apparaat ook
+        // server-side mag bewerken zonder zelf het wachtwoord te hoeven kennen.
+        if (lockIt) revokeDeviceTokens(body.lockDeviceId);
+        const token = lockIt ? null : issueUnlockToken(body.lockDeviceId);
         for (const c of targets) {
-          c.locked = !!body.locked;
-          sseSend(c, 'lock', { locked: !!body.locked });
+          c.locked = lockIt;
+          sseSend(c, 'lock', { locked: lockIt, token });
         }
       }
-      // Showcomputer aanwijzen.
-      if (body.showDeviceId != null && !setShowComputer(body.showDeviceId)) {
-        json(res, 404, { error: 'Dat apparaat is niet (meer) verbonden' });
-        return;
+      // Showcomputer aanwijzen (ook een beheeractie).
+      if (body.showDeviceId != null) {
+        if (!canEdit(req)) { json(res, 403, { error: 'Vergrendeld' }); return; }
+        if (!setShowComputer(body.showDeviceId)) {
+          json(res, 404, { error: 'Dat apparaat is niet (meer) verbonden' });
+          return;
+        }
       }
       broadcastDevices();
       json(res, 200, { ok: true, showDeviceId: primaryDeviceId, devices: deviceList() });
@@ -770,7 +824,18 @@ const handleRequest = async (req, res) => {
       if (req.method === 'PUT' || req.method === 'POST') {
         const body = await readJson(req, 5e7).catch(() => null);
         if (!body || !Array.isArray(body.cues)) { json(res, 400, { error: 'Verwacht { appId, cues, name }' }); return; }
-        const data = await saveShow(body.cues, body.appId, body.name, typeof body.single === 'boolean' ? body.single : null);
+        let cues = body.cues;
+        let name = body.name;
+        let single = typeof body.single === 'boolean' ? body.single : null;
+        if (!canEdit(req)) {
+          // Vergrendeld: alleen fade/loop van bestaande cues; naam en single-cue
+          // blijven zoals opgeslagen, en toevoegen/verwijderen/herordenen telt niet.
+          const stored = await loadShow();
+          cues = mergeLockedCues(body.cues, stored.cues);
+          name = stored.name;
+          single = stored.single;
+        }
+        const data = await saveShow(cues, body.appId, name, single);
         json(res, 200, { ok: true, rev: data.rev });
         return;
       }
@@ -785,6 +850,7 @@ const handleRequest = async (req, res) => {
       const file = join(AUDIO_DIR, id);
 
       if (req.method === 'PUT' || req.method === 'POST') {
+        if (!canEdit(req)) { json(res, 403, { error: 'Vergrendeld — geen audio-wijzigingen' }); return; }
         const buf = await readBuffer(req).catch((err) => { json(res, 413, { error: err.message }); return null; });
         if (!buf) return;
         await mkdir(AUDIO_DIR, { recursive: true });
@@ -800,6 +866,7 @@ const handleRequest = async (req, res) => {
         return;
       }
       if (req.method === 'DELETE') {
+        if (!canEdit(req)) { json(res, 403, { error: 'Vergrendeld' }); return; }
         await unlink(file).catch(() => {});
         json(res, 200, { ok: true });
         return;
@@ -819,6 +886,7 @@ const handleRequest = async (req, res) => {
       const file = join(PROJECTS_DIR, name);
 
       if (req.method === 'PUT' || req.method === 'POST') {
+        if (!canEdit(req)) { json(res, 403, { error: 'Vergrendeld — geen projecten opslaan' }); return; }
         const buf = await readBuffer(req).catch((err) => { json(res, 413, { error: err.message }); return null; });
         if (!buf) return;
         await mkdir(PROJECTS_DIR, { recursive: true });
@@ -827,6 +895,7 @@ const handleRequest = async (req, res) => {
         return;
       }
       if (req.method === 'DELETE') {
+        if (!canEdit(req)) { json(res, 403, { error: 'Vergrendeld' }); return; }
         await unlink(file).catch(() => {});
         json(res, 200, { ok: true });
         return;

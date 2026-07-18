@@ -1410,6 +1410,17 @@ function isModalOpen() {
 // --- Vergrendeling (zachte lock tegen per ongeluk bewerken) -----------------
 const LOCK_KEY = 'webqlab.lock'; // {salt, hash}
 const LOCKED_KEY = 'webqlab.locked'; // '1' | '0'
+// Bewijs dat dit apparaat is ontgrendeld (van /api/unlock). Gaat mee bij bewerkingen;
+// de server dwingt het slot dáármee af — niet met wat de client over z'n status zegt.
+const EDIT_TOKEN_KEY = 'webqlab.editToken';
+function setEditToken(t) {
+  if (t) sessionStorage.setItem(EDIT_TOKEN_KEY, t);
+  else sessionStorage.removeItem(EDIT_TOKEN_KEY);
+}
+function editHeaders(base = {}) {
+  const t = sessionStorage.getItem(EDIT_TOKEN_KEY);
+  return t ? { ...base, 'x-cuego-token': t } : base;
+}
 let locked = false;
 
 // Elementen die bij vergrendeling worden uitgeschakeld (afspelen blijft werken).
@@ -1464,6 +1475,7 @@ async function checkPassword(pw) {
 
 function setLocked(v) {
   locked = v;
+  if (v) setEditToken(''); // vergrendeld → onze bewerkrechten vervallen
   localStorage.setItem(LOCKED_KEY, v ? '1' : '0');
   applyLockState();
   appLink?.beat?.(); // status meteen doorgeven, niet pas bij de volgende ping
@@ -1509,7 +1521,9 @@ async function toggleLock() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ password: v, deviceId: deviceId() }),
         }).catch(() => null);
-        return res?.ok ? true : 'Onjuist wachtwoord.';
+        if (!res?.ok) return 'Onjuist wachtwoord.';
+        setEditToken((await res.json().catch(() => ({}))).token); // bewerkrechten
+        return true;
       }
       return (await checkPassword(v)) ? true : 'Onjuist wachtwoord.';
     },
@@ -1644,6 +1658,7 @@ async function tryUnlock() {
         body: JSON.stringify({ password: input.value, deviceId: deviceId() }),
       });
       if (!res.ok) return fail('Onjuist wachtwoord.');
+      setEditToken((await res.json().catch(() => ({}))).token); // bewerkrechten
     } catch {
       return fail('Geen verbinding met de server.');
     }
@@ -2924,7 +2939,10 @@ async function initServerDetection() {
       },
       label: deviceLabel(), // gaat meteen mee bij het verbinden
       isLocked: () => locked, // gaat mee in het levensteken
-      onLock: (lockIt) => { if (lockIt !== locked) setLocked(lockIt); }, // op afstand (ont)grendeld
+      onLock: (lockIt, token) => { // op afstand (ont)grendeld
+        if (token) setEditToken(token); // via het paneel ontgrendeld → token overnemen
+        if (lockIt !== locked) setLocked(lockIt);
+      },
       onDevices: (info) => {
         devicesInfo = info;
         setLinkReady(true); // de server heeft onze rol doorgegeven → knop vrij
@@ -2960,7 +2978,7 @@ function deviceLabel() {
 async function setRemoteLock(id, lockIt) {
   await fetch('api/devices', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: editHeaders({ 'Content-Type': 'application/json' }),
     body: JSON.stringify({ lockDeviceId: id, locked: lockIt }),
   }).catch(() => {});
 }
@@ -2977,7 +2995,7 @@ async function sendDeviceLabel(label) {
 async function claimShowComputer(id) {
   await fetch('api/devices', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: editHeaders({ 'Content-Type': 'application/json' }),
     body: JSON.stringify({ showDeviceId: id }),
   }).catch(() => {});
 }
