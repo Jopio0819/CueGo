@@ -294,7 +294,8 @@ function promptPassword({ title = '', subtitle = '', label = 'Wachtwoord', hint 
       lines.push('');
       lines.push(`  ${label} ${C.cyan}›${C.reset} ${'•'.repeat(value.length)}${C.dim}▏${C.reset}`);
       lines.push('');
-      if (hint) lines.push(`  ${C.dim}${hint}${C.reset}`);
+      // De hint helpt alleen vóór je begint; zodra je typt is hij overbodig.
+      if (hint && value.length === 0) lines.push(`  ${C.dim}${hint}${C.reset}`);
       return lines;
     }
     function render() {
@@ -338,10 +339,17 @@ async function initAdminPassword() {
     else console.log('Geen terminal en geen CUEGO_ADMIN_PASSWORD — apparaten starten onvergrendeld.');
     return;
   }
-  adminPassword = await promptPassword({
+  const pw = await promptPassword({
     title: '🔒  Admin-wachtwoord instellen',
     subtitle: 'Elk apparaat start vergrendeld tot dit wachtwoord daar is ingevuld.\nLeeg laten = geen slot.',
+    hint: 'Enter bevestigen · typ exit om CueGo te stoppen',
   });
+  if (pw.toLowerCase() === 'exit') {
+    process.stdout.write('\x1b[2J\x1b[3J\x1b[H'); // scherm schoon achterlaten
+    console.log('CueGo gestopt.');
+    process.exit(0);
+  }
+  adminPassword = pw;
   // De status komt in de opstart-samenvatting (printStartup), niet als losse regel.
 }
 
