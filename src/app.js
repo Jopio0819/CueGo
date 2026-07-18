@@ -2617,20 +2617,29 @@ let serverInfo = null;
 let appLink = null;
 let linkConnected = false;
 
-// Tot de server ons vertelt wíé de showcomputer is (verbinden + eerste
-// devices-event), weten we niet of klikken hier iets doet. Zolang tonen we een
-// spinner op de afspeelknop i.p.v. stil te falen.
-let linkReady = false;
+// Twee heel verschillende "niet klaar"-situaties:
+//  - INITIEEL verbinden (nog nooit onze rol gehoord) → we weten niet of klikken iets
+//    doet, dus spinner op de knop die 'm blokkeert.
+//  - Verbinding KWIJT ná verbonden te zijn geweest → we kennen onze rol al; de
+//    showcomputer speelt gewoon lokaal door uit IndexedDB. Dan NIET blokkeren, maar
+//    een discrete 'offline — opnieuw verbinden'-melding tonen. De EventSource
+//    herverbindt vanzelf en re-synct zodra de server terug is.
+let linkReady = false;   // verbonden én onze rol bekend
+let everReady = false;   // deze sessie minstens één keer klaar geweest
 let linkWaitTimer = null;
 function setLinkReady(ready) {
   linkReady = ready;
-  document.body.classList.toggle('link-connecting', sharedShow && !linkReady);
+  if (ready) everReady = true;
   clearTimeout(linkWaitTimer);
-  // Vangnet: nooit eindeloos blijven draaien als er onverhoopt geen devices-event
-  // komt — na een paar seconden geven we de knop toch vrij.
-  if (sharedShow && !linkReady) {
+  const connecting = sharedShow && !linkReady && !everReady;
+  const offline = sharedShow && !linkReady && everReady;
+  document.body.classList.toggle('link-connecting', connecting);
+  document.body.classList.toggle('link-offline', offline);
+  // Vangnet bij de eerste verbinding: mocht er onverhoopt nooit een devices-event
+  // komen, geef de knop dan toch vrij (behandel het als 'klaar' i.p.v. eeuwig spinnen).
+  if (connecting) {
     linkWaitTimer = setTimeout(() => {
-      linkReady = true;
+      everReady = true;
       document.body.classList.remove('link-connecting');
     }, 8000);
   }
