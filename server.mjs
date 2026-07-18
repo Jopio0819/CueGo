@@ -991,6 +991,21 @@ if (!(await maybeUpdate())) {
   server.requestTimeout = 15000;
   server.headersTimeout = 16000;
 
+  // Nette melding i.p.v. een onbehandelde 'error'-crash met stacktrace. Meestal is
+  // de poort bezet omdat CueGo al ergens draait (of een oude sessie hangt nog).
+  server.on('error', (err) => {
+    if (err.code === 'EADDRINUSE') {
+      console.error(`\nPoort ${PORT} is al in gebruik — draait CueGo hier al?`);
+      console.error('Sluit die eerst (of open gewoon de bestaande in je browser),');
+      console.error(`of start op een andere poort:  PORT=4322 cuego\n`);
+    } else if (err.code === 'EACCES') {
+      console.error(`\nGeen toestemming voor poort ${PORT}. Kies een poort boven 1024:  PORT=4321 cuego\n`);
+    } else {
+      console.error(`\nCueGo kon niet starten: ${err.message}\n`);
+    }
+    process.exit(1);
+  });
+
   server.listen(PORT, () => {
     console.log(`CueGo draait op ${serving}://localhost:${PORT}`);
     const ips = lanIps();
