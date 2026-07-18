@@ -172,7 +172,7 @@ export class AudioEngine {
   }
 
   _scheduleCrossIter(voice, when, first) {
-    if (voice.ended) return;
+    if (voice.ended || voice.fading) return; // uitgefade of gestopt → geen nieuwe iteratie plannen
     const ctx = this.ctx;
     const xf = voice._xf;
     const offset = first ? voice._firstOffset : 0;
@@ -360,7 +360,13 @@ async setSinkId(deviceId) {
     const v = this.voices.get(cueId);
     if (!v) return;
     const fade = seconds != null ? seconds : Math.max(0, parseFloat(v.cue?.fadeOut) || 0);
-    if (v.paused || !v.source) {
+    // Gepauzeerd of geen enkele klinkende bron → niets te faden, gewoon opruimen.
+    // LET OP: een loop-cue mét crossfade heeft geen v.source maar wél v.sources[];
+    // die tellen ook mee. De oude check `!v.source` verwijderde zo'n voice zonder de
+    // bronnen te stoppen én zonder de scheduler-timer te wissen — dan liep de loop
+    // orphaned door na een fade-out/crossfade (onstopbaar, want uit de map verdwenen).
+    if (v.paused || this._voiceSources(v).length === 0) {
+      if (v.schedulerTimer) { clearTimeout(v.schedulerTimer); v.schedulerTimer = null; }
       this.voices.delete(cueId);
       return;
     }
