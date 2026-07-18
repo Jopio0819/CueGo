@@ -33,6 +33,9 @@ export function createControl(actions) {
     toggle: () => actions.toggle(),
     select: (a) => actions.select(a?.dir ?? a?.cue),
     transition: () => actions.transition(),
+    // De crossfade zelf (na de prompt): loopt via de bus zodat hij op een
+    // meekijker wordt doorgestuurd naar de showcomputer i.p.v. lokaal te spelen.
+    crossfade: (a) => actions.crossfade(a),
     state: () => actions.state(),
   };
 
@@ -74,6 +77,7 @@ export function publicApi(control) {
     toggle: () => d('toggle'),
     select: (dir) => d('select', { dir }),
     transition: () => d('transition'),
+    crossfade: (a, b, fade) => d('crossfade', { a, b, fade }),
     state: () => d('state'),
     dispatch: (cmd, args) => d(cmd, args),
     on: control.on,

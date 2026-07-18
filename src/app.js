@@ -534,7 +534,8 @@ function go(a) {
   const cue = cues.selected;
   if (!cue) return;
   emit('go', { id: cue.id, number: cue.number, name: cue.name });
-  playCue(cue); // herstart als hij al speelt → nooit dubbel
+  // a.fadeIn (van de fade-in-toets): starten met een gekozen fade-in i.p.v. hard.
+  playCue(cue, a?.fadeIn != null ? { fadeIn: Math.max(0, a.fadeIn) } : undefined); // herstart als hij al speelt → nooit dubbel
   cues.advance();
   selectOnly(cues.selected.id, cues.selectedIndex);
   render();
@@ -543,10 +544,38 @@ function go(a) {
 
 const numValidate = (x) => (x !== '' && !Number.isNaN(parseFloat(x)) && parseFloat(x) >= 0 ? true : 'Voer een geldig getal in.');
 
+// Wat klinkt er nu? Lokaal (showcomputer of offline) uit onze eigen engine; als
+// meekijker uit de toestand die de showcomputer pusht. Voor de crossfade-vraag:
+// speelt er al iets, dan faden we dáárvandaan naar de gekozen cue.
+function playingCueForFade() {
+  if (isFollower() && linkConnected && showState) {
+    const p = showState.cues?.find((c) => c.playing);
+    return p ? cues.getById(p.id) : null;
+  }
+  for (const id of engine.voices.keys()) {
+    if (engine.isPlaying(id)) { const c = cues.getById(id); if (c) return c; }
+  }
+  return null;
+}
+
+// De prompt zelf blijft lokaal (waar je 'm intikt). De uitkomst gaat via de bus:
+// een gewone fade-in als 'go' met fadeIn, een crossfade als 'crossfade'. Zo speelt
+// een meekijker niet zelf af maar stuurt hij de showcomputer aan.
+// `now`: direct overvloeien (er speelt al iets, jij bepaalt het moment). Anders
+// gepland: A speelt eerst (uit), en vlak vóór z'n einde vloeit hij over naar B.
+async function askCrossfade(a, b, now = false) {
+  const v = await customPrompt({
+    title: 'Crossfade', message: `Crossfade van "${a.name}" naar "${b.name}" (s):`, okLabel: 'Start',
+    inputType: 'number', defaultValue: '3', validate: numValidate,
+  });
+  if (v == null) return;
+  control.dispatch('crossfade', { a: a.id, b: b.id, fade: Math.max(0, parseFloat(v) || 0), now });
+}
+
 // Transition-toets ('i'):
-// - 2 cues geselecteerd → crossfade: speel de eerste, en vlak voor het einde daarvan
-//   vloeit hij over in de tweede (eerste faadt uit, tweede faadt in).
-// - 1 cue geselecteerd → start die cue met een gekozen fade-in (en schuif door, zoals GO).
+// - 2 cues geselecteerd → crossfade tussen die twee.
+// - 1 cue geselecteerd terwijl er al iets ánders speelt → crossfade van dat naar de selectie.
+// - 1 cue geselecteerd en er speelt niets → start die met een gekozen fade-in (en schuif door, zoals GO).
 async function openFadeInPrompt() {
   const selCues = [...selection]
     .map((id) => cues.getById(id))
@@ -554,28 +583,46 @@ async function openFadeInPrompt() {
     .sort((a, b) => cues.cues.indexOf(a) - cues.cues.indexOf(b));
 
   if (selCues.length >= 2) {
-    const [a, b] = selCues;
-    const v = await customPrompt({
-      title: 'Crossfade', message: `Crossfade van "${a.name}" naar "${b.name}" (s):`, okLabel: 'Start',
-      inputType: 'number', defaultValue: '3', validate: numValidate,
-    });
-    if (v == null) return;
-    transitionBetween(a, b, Math.max(0, parseFloat(v) || 0)); // 0 = harde cut (geen fade)
+    await askCrossfade(selCues[0], selCues[1]);
     return;
   }
 
   const cue = cues.selected;
   if (!cue) return;
+
+  // Speelt er al iets anders? Dan is "I" een dírecte crossfade van dat naar de selectie.
+  const playing = playingCueForFade();
+  if (playing && playing.id !== cue.id) {
+    await askCrossfade(playing, cue, true);
+    return;
+  }
+
+  // Anders: gewone fade-in van de selectie (via 'go' zodat het doorgestuurd wordt).
   const v = await customPrompt({
     title: 'Fade-in', message: `Hoe lang moet de fade-in van "${cue.name}" duren (s)?`, okLabel: 'Start',
     inputType: 'number', defaultValue: String(cue.fadeIn || 2), validate: numValidate,
   });
   if (v == null) return;
-  await playCue(cue, { fadeIn: Math.max(0, parseFloat(v) || 0) });
-  cues.advance();
-  if (cues.selected) selectOnly(cues.selected.id, cues.selectedIndex);
-  render();
-  syncInspector();
+  control.dispatch('go', { cue: cue.id, fadeIn: Math.max(0, parseFloat(v) || 0) });
+}
+
+// Voer een crossfade uit (van de bus; kan lokaal of doorgestuurd binnenkomen).
+function apiCrossfade(a) {
+  const cueA = resolveCue(a?.a);
+  const cueB = resolveCue(a?.b);
+  if (!cueA || !cueB) return;
+  const fade = Math.max(0, parseFloat(a?.fade) || 0);
+  if (a?.now) {
+    // Directe overgang: wat nu speelt uitfaden, de volgende meteen infaden.
+    engine.fadeOutCue(cueA.id, fade);
+    playCue(cueB, { fadeIn: fade });
+    const bi = cues.cues.indexOf(cueB);
+    if (bi !== -1) selectOnly(cueB.id, bi);
+    render();
+    syncInspector();
+    return;
+  }
+  transitionBetween(cueA, cueB, fade); // gepland: A speelt uit, vlak vóór z'n einde over naar B
 }
 
 // Cross-fade van cue A naar cue B, getimed zodat de overgang vlak vóór A's einde
@@ -2282,7 +2329,7 @@ function showToast(msg) {
 // Commando's die geluid maken. Is een ándere client de showcomputer, dan gaan
 // deze daarheen i.p.v. hier af te spelen. (`transition` niet: die opent eerst een
 // prompt, en die hoort op het scherm te blijven waar je 'm intikt.)
-const FORWARD_CMDS = new Set(['go', 'play', 'playAll', 'stop', 'panic', 'pause', 'resume', 'toggle', 'reset']);
+const FORWARD_CMDS = new Set(['go', 'play', 'playAll', 'stop', 'panic', 'pause', 'resume', 'toggle', 'reset', 'crossfade']);
 
 // Geeft true als het commando is doorgestuurd (dan voeren we het hier niet uit).
 function forwardCommand(cmd, args) {
@@ -2295,9 +2342,9 @@ function forwardCommand(cmd, args) {
 
   let payload = args;
   if (cmd === 'go') {
-    // Stuur onze eigen selectie mee én schuif hier door, zodat beide kanten op
-    // dezelfde volgende cue uitkomen.
-    payload = { cue: cues.selected?.id ?? null };
+    // Stuur onze eigen selectie mee (én een eventuele fade-in van de "I"-toets) én
+    // schuif hier door, zodat beide kanten op dezelfde volgende cue uitkomen.
+    payload = { cue: cues.selected?.id ?? null, fadeIn: args?.fadeIn };
     cues.advance();
     if (cues.selected) selectOnly(cues.selected.id, cues.selectedIndex);
     render();
@@ -2333,6 +2380,7 @@ const control = createControl({
   toggle: transportToggle,
   select: apiSelect,
   transition: openFadeInPrompt,
+  crossfade: apiCrossfade,
   state: apiState,
 });
 emit = control.emit;
