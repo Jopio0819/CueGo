@@ -21,7 +21,6 @@ import { extname, join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { networkInterfaces, homedir } from 'node:os';
 import { createSocket } from 'node:dgram';
-import { createInterface } from 'node:readline';
 import { execFile, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
 import { randomBytes } from 'node:crypto';
@@ -277,20 +276,55 @@ async function ensureCuegoCommand() {
 let adminPassword = '';
 
 // Vraag het wachtwoord zonder het op het scherm te zetten.
-function askPassword(prompt) {
+// Gemaskeerde wachtwoord-prompt in dezelfde stijl als het menu: schoon scherm,
+// titel + uitleg, en een invoerveld dat de tekens als • toont. Puur Node, geen deps.
+function promptPassword({ title = '', subtitle = '', label = 'Wachtwoord', hint = 'Enter bevestigen · leeg = geen slot' }) {
   return new Promise((resolve) => {
-    const rl = createInterface({ input: process.stdin, output: process.stdout, terminal: true });
-    // Onderdruk de echo: herteken alleen de prompt, nooit de ingetikte tekens.
-    rl._writeToOutput = (s) => {
-      if (rl.muted) rl.output.write(`\x1B[2K\x1B[200D${prompt}`);
-      else rl.output.write(s);
-    };
-    rl.question(prompt, (answer) => {
-      rl.output.write('\n');
-      rl.close();
-      resolve(String(answer).trim());
-    });
-    rl.muted = true;
+    const stdin = process.stdin;
+    const out = process.stdout;
+    const C = { reset: '\x1b[0m', dim: '\x1b[2m', cyan: '\x1b[36m', bold: '\x1b[1m', hide: '\x1b[?25l', show: '\x1b[?25h' };
+    let value = '';
+    let prevLen = 0;
+    let done = false;
+
+    function build() {
+      const lines = [];
+      if (title) lines.push(`${C.bold}${title}${C.reset}`);
+      if (subtitle) subtitle.split('\n').forEach((l) => lines.push(`${C.dim}${l}${C.reset}`));
+      lines.push('');
+      lines.push(`  ${label} ${C.cyan}›${C.reset} ${'•'.repeat(value.length)}${C.dim}▏${C.reset}`);
+      lines.push('');
+      if (hint) lines.push(`  ${C.dim}${hint}${C.reset}`);
+      return lines;
+    }
+    function render() {
+      const lines = build();
+      if (prevLen) out.write(`\x1b[${prevLen}A\x1b[0J`);
+      out.write(lines.join('\n') + '\n');
+      prevLen = lines.length;
+    }
+    function finish(result) {
+      if (done) return;
+      done = true;
+      stdin.setRawMode?.(false);
+      stdin.pause();
+      stdin.removeListener('data', onData);
+      out.write(C.show + '\n');
+      resolve(result);
+    }
+    function onData(buf) {
+      const s = buf.toString();
+      if (s === '\x03') { stdin.setRawMode?.(false); out.write(C.show + '\n'); process.exit(130); } // Ctrl-C → afbreken
+      if (s === '\r' || s === '\n') return finish(value.trim());
+      if (s === '\x7f' || s === '\b') { value = value.slice(0, -1); render(); return; } // backspace
+      if (!s.startsWith('\x1b') && [...s].every((ch) => ch >= ' ')) { value += s; render(); return; } // gewone tekens
+    }
+
+    out.write('\x1b[2J\x1b[3J\x1b[H' + C.hide);
+    render();
+    stdin.setRawMode?.(true);
+    stdin.resume();
+    stdin.on('data', onData);
   });
 }
 
@@ -303,7 +337,10 @@ async function initAdminPassword() {
     else console.log('Geen terminal en geen CUEGO_ADMIN_PASSWORD — apparaten starten onvergrendeld.');
     return;
   }
-  adminPassword = await askPassword('Admin-wachtwoord (leeg = geen vergrendeling): ');
+  adminPassword = await promptPassword({
+    title: '🔒  Admin-wachtwoord instellen',
+    subtitle: 'Elk apparaat start vergrendeld tot dit wachtwoord daar is ingevuld.\nLeeg laten = geen slot.',
+  });
   console.log(adminPassword
     ? 'Admin-wachtwoord ingesteld. Elk apparaat start vergrendeld tot het daar is ingevuld.'
     : 'Geen admin-wachtwoord — apparaten starten onvergrendeld.');
