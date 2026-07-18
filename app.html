@@ -10,6 +10,10 @@
     <link rel="stylesheet" href="style.css" />
   </head>
   <body>
+    <div id="offlineBanner" class="offline-banner" role="status">
+      <i class="dot"></i>
+      <span>Offline — geen verbinding met de server. De show speelt lokaal door; opnieuw verbinden…</span>
+    </div>
     <header class="topbar">
       <div class="logo">
         <img src="assets/logo.png" alt="CueGo" />
@@ -208,7 +212,6 @@
         <span id="tpDuration" class="tp-time">0:00</span>
         <span id="tpName" class="tp-name"></span>
         <span id="modeBadge" class="mode-badge" hidden>Single cue</span>
-        <span id="linkOffline" class="link-offline-badge"><i class="dot"></i>Offline — opnieuw verbinden…</span>
       </div>
     </footer>
 

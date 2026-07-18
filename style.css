@@ -443,23 +443,32 @@ body.link-connecting #playPauseBtn .ic-connecting { display: block; }
 body.link-connecting #playPauseBtn .ic-play,
 body.link-connecting #playPauseBtn .ic-pause { display: none !important; }
 
-/* Verbinding kwijt NÁ verbonden te zijn geweest: de showcomputer speelt lokaal
-   door, dus géén blokkade — alleen een discrete melding dat we reconnecten. */
-.link-offline-badge {
+/* Verbinding kwijt NÁ verbonden te zijn geweest: de showcomputer/meekijker speelt
+   lokaal door, dus géén blokkade — wel een duidelijke banner bovenaan dat we
+   offline zijn en opnieuw verbinden. */
+.offline-banner {
   display: none;
   align-items: center;
-  gap: 7px;
-  margin-left: 12px;
-  font-size: 12px;
-  color: #f0a35e;
-  white-space: nowrap;
+  justify-content: center;
+  gap: 10px;
+  flex: 0 0 auto;
+  padding: 9px 16px;
+  background: linear-gradient(180deg, #7a4a12, #6b3f0f);
+  color: #ffe6c9;
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  border-bottom: 1px solid rgba(255, 180, 100, 0.35);
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.35);
 }
-body.link-offline .link-offline-badge { display: inline-flex; }
-.link-offline-badge .dot {
-  width: 8px;
-  height: 8px;
+body.link-offline .offline-banner { display: flex; }
+.offline-banner .dot {
+  width: 9px;
+  height: 9px;
   border-radius: 50%;
-  background: #f0a35e;
+  background: #ffb454;
+  box-shadow: 0 0 8px rgba(255, 180, 84, 0.8);
+  flex: none;
   animation: pulse-offline 1.2s ease-in-out infinite;
 }
 @keyframes pulse-offline { 0%, 100% { opacity: 1; } 50% { opacity: 0.25; } }
