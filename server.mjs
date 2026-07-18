@@ -309,7 +309,8 @@ function promptPassword({ title = '', subtitle = '', label = 'Wachtwoord', hint 
       stdin.setRawMode?.(false);
       stdin.pause();
       stdin.removeListener('data', onData);
-      out.write(C.show + '\n');
+      if (prevLen) out.write(`\x1b[${prevLen}A\x1b[0J`); // de prompt (mét bolletjes) weghalen bij Enter
+      out.write(C.show);
       resolve(result);
     }
     function onData(buf) {
@@ -341,9 +342,7 @@ async function initAdminPassword() {
     title: '🔒  Admin-wachtwoord instellen',
     subtitle: 'Elk apparaat start vergrendeld tot dit wachtwoord daar is ingevuld.\nLeeg laten = geen slot.',
   });
-  console.log(adminPassword
-    ? 'Admin-wachtwoord ingesteld. Elk apparaat start vergrendeld tot het daar is ingevuld.'
-    : 'Geen admin-wachtwoord — apparaten starten onvergrendeld.');
+  // De status komt in de opstart-samenvatting (printStartup), niet als losse regel.
 }
 
 // --- Gedeelde show ----------------------------------------------------------
@@ -1137,6 +1136,29 @@ function openBrowser(url) {
   try { spawn(cmd, args, { stdio: 'ignore', detached: true }).unref(); } catch { /* stil — de URL staat in de log */ }
 }
 
+// Nette opstart-samenvatting i.p.v. losse regels. In een echte terminal met kleur en
+// op een schoon scherm; gepipet naar een logbestand gewoon platte tekst zonder codes.
+function printStartup() {
+  const isTTY = process.stdout.isTTY;
+  const C = { reset: '\x1b[0m', dim: '\x1b[2m', cyan: '\x1b[36m', bold: '\x1b[1m', green: '\x1b[32m', amber: '\x1b[33m' };
+  const c = (code, s) => (isTTY ? code + s + C.reset : s);
+  const ips = lanIps();
+  const row = (label, val) => `  ${c(C.dim, label.padEnd(18))}${c(C.cyan, val)}`;
+  const L = [];
+  L.push(`  ${c(C.green, '●')}  ${c(C.bold, 'CueGo draait')}`);
+  L.push('');
+  L.push(row('Op deze computer', `${serving}://localhost:${PORT}`));
+  for (const ip of ips) L.push(row('Op je netwerk', `${serving}://${ip}:${PORT}`));
+  if (ips.length) L.push(row('Afstandsbediening', `${serving}://${ips[0]}:${PORT}/remote.html`));
+  L.push('');
+  if (serving === 'https') L.push(`  ${c(C.amber, '›')}  Eerste keer per apparaat: certificaat accepteren (Geavanceerd → Doorgaan)`);
+  if (adminPassword) L.push(`  ${c(C.amber, '🔒')}  Admin-wachtwoord actief — elk apparaat start vergrendeld tot het is ingevuld`);
+  else if (ips.length) L.push(`  ${c(C.dim, '○')}  Geen wachtwoord — iedereen op dit netwerk kan de show bedienen`);
+  if (adminPassword && !oscEnabled()) L.push(`  ${c(C.dim, '○')}  OSC uit (geen wachtwoord). Aanzetten: CUEGO_OSC=on`);
+  if (isTTY) process.stdout.write('\x1b[2J\x1b[3J\x1b[H');
+  process.stdout.write('\n' + L.join('\n') + '\n\n');
+}
+
 // Volgorde bij het starten: eerst de update-check (herstart eventueel met nieuwe
 // code), dan het wachtwoord vragen, dán pas luisteren — anders kan een apparaat
 // al verbinden voordat we weten of er een slot op zit.
@@ -1169,15 +1191,7 @@ if (!(await maybeUpdate())) {
   });
 
   server.listen(PORT, () => {
-    console.log(`CueGo draait op ${serving}://localhost:${PORT}`);
-    const ips = lanIps();
-    if (ips.length) {
-      console.log(`Afstandsbediening: ${ips.map((ip) => `${serving}://${ip}:${PORT}/remote.html`).join('  ')}`);
-    }
-    if (serving === 'https') console.log('Eerste keer per apparaat: browserwaarschuwing accepteren (Geavanceerd → Doorgaan).');
-    if (adminPassword) console.log('Remotes vragen om het admin-wachtwoord.');
-    else if (ips.length) console.log('Let op: zonder admin-wachtwoord kan iedereen op dit netwerk de show bedienen.');
-    if (adminPassword && !oscEnabled()) console.log('OSC uit: OSC kent geen wachtwoord. Toch aanzetten? CUEGO_OSC=on');
+    printStartup();
     startOsc();
     openBrowser(`${serving}://localhost:${PORT}`);
   });
