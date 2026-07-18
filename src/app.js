@@ -808,23 +808,45 @@ function bindTransportBar() {
   seekEl.addEventListener('input', () => {
     seeking = true;
     updateSeekFill();
-    const cue = transportCue();
-    if (!cue) return;
-    const dur = engine.playLength(cue) || 0;
-    tpCurrent.textContent = fmtTime((seekEl.value / 1000) * dur);
+    const target = seekTargetCue();
+    if (!target) return;
+    tpCurrent.textContent = fmtTime((seekEl.value / 1000) * target.duration);
   });
 
-  seekEl.addEventListener('change', async () => {
+  seekEl.addEventListener('change', () => {
     seeking = false;
-    const cue = transportCue();
-    if (!cue) return;
-    await engine.prepare(cue);
-    const dur = engine.playLength(cue) || 0;
-    await engine.seek(cue, (seekEl.value / 1000) * dur, { onEnded: onCueEnded });
-    render();
-    if (engine.isPlaying(cue.id)) animateProgress();
-    syncTransportProgress();
+    // Welke cue toont de balk, en hoe lang is die? Via de bus: op een meekijker
+    // stuurt dit de showcomputer aan i.p.v. onze (lege) eigen engine te verspringen.
+    const target = seekTargetCue();
+    if (!target) return;
+    control.dispatch('seek', { cue: target.id, pos: (seekEl.value / 1000) * target.duration });
   });
+}
+
+// Welke cue vertegenwoordigt de afspeelbalk, en hoe lang is die? Lokaal (showcomputer)
+// uit de engine; als meekijker uit de toestand van de showcomputer — want díe bepaalt
+// wat de balk toont, niet onze eigen (lege) engine.
+function seekTargetCue() {
+  if (isFollower() && linkConnected && showState) {
+    const cs = showState.cues || [];
+    const info = cs.find((c) => c.playing || c.paused)
+      || (cues.selected && cs.find((c) => c.id === cues.selected.id));
+    return info ? { id: info.id, duration: info.duration || 0 } : null;
+  }
+  const cue = transportCue();
+  if (!cue) return null;
+  return { id: cue.id, duration: engine.playLength(cue) || 0 };
+}
+
+// Verspring naar een positie (van de bus; lokaal of doorgestuurd).
+async function apiSeek(a) {
+  const cue = resolveCue(a?.cue);
+  if (!cue) return;
+  await engine.prepare(cue);
+  await engine.seek(cue, Math.max(0, parseFloat(a?.pos) || 0), { onEnded: onCueEnded });
+  render();
+  if (engine.isPlaying(cue.id)) animateProgress();
+  syncTransportProgress();
 }
 
 // --- Preview-/monitor-balk in de inspector (voor de geselecteerde cue) ------
@@ -2339,7 +2361,7 @@ function showToast(msg) {
 // Commando's die geluid maken. Is een ándere client de showcomputer, dan gaan
 // deze daarheen i.p.v. hier af te spelen. (`transition` niet: die opent eerst een
 // prompt, en die hoort op het scherm te blijven waar je 'm intikt.)
-const FORWARD_CMDS = new Set(['go', 'play', 'playAll', 'stop', 'panic', 'pause', 'resume', 'toggle', 'reset', 'crossfade']);
+const FORWARD_CMDS = new Set(['go', 'play', 'playAll', 'stop', 'panic', 'pause', 'resume', 'toggle', 'reset', 'crossfade', 'seek']);
 
 // Geeft true als het commando is doorgestuurd (dan voeren we het hier niet uit).
 function forwardCommand(cmd, args) {
@@ -2391,6 +2413,7 @@ const control = createControl({
   select: apiSelect,
   transition: openFadeInPrompt,
   crossfade: apiCrossfade,
+  seek: apiSeek,
   state: apiState,
 });
 emit = control.emit;

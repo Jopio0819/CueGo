@@ -36,6 +36,8 @@ export function createControl(actions) {
     // De crossfade zelf (na de prompt): loopt via de bus zodat hij op een
     // meekijker wordt doorgestuurd naar de showcomputer i.p.v. lokaal te spelen.
     crossfade: (a) => actions.crossfade(a),
+    // De afspeelbalk verslepen op een meekijker → de showcomputer verspringt.
+    seek: (a) => actions.seek(a),
     state: () => actions.state(),
   };
 
@@ -78,6 +80,7 @@ export function publicApi(control) {
     select: (dir) => d('select', { dir }),
     transition: () => d('transition'),
     crossfade: (a, b, fade) => d('crossfade', { a, b, fade }),
+    seek: (cue, pos) => d('seek', { cue, pos }),
     state: () => d('state'),
     dispatch: (cmd, args) => d(cmd, args),
     on: control.on,
