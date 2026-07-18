@@ -124,13 +124,61 @@ async function checkForUpdate() {
   }
 }
 
-function askLine(prompt) {
+// Klein pijltjes-menu in de terminal (puur Node, geen deps). Geeft de gekozen index
+// terug, of -1 bij annuleren (Esc/Ctrl-C). Vereist een TTY. Tekent zichzelf ter
+// plekke opnieuw bij elke toetsaanslag, zoals een moderne CLI.
+function promptMenu({ title = '', subtitle = '', options = [], hint = '↑/↓ kiezen · Enter bevestigen' }) {
   return new Promise((resolve) => {
-    const rl = createInterface({ input: process.stdin, output: process.stdout, terminal: true });
-    rl.question(prompt, (answer) => {
-      rl.close();
-      resolve(String(answer).trim().toLowerCase());
-    });
+    const stdin = process.stdin;
+    const out = process.stdout;
+    const C = { reset: '\x1b[0m', dim: '\x1b[2m', cyan: '\x1b[36m', bold: '\x1b[1m', hide: '\x1b[?25l', show: '\x1b[?25h' };
+    let sel = 0;
+    let prevLen = 0;
+    let done = false;
+
+    function build() {
+      const lines = [];
+      if (title) lines.push(`${C.bold}${title}${C.reset}`);
+      if (subtitle) lines.push(`${C.dim}${subtitle}${C.reset}`);
+      lines.push('');
+      options.forEach((opt, i) => {
+        lines.push(i === sel ? `  ${C.cyan}› ${opt}${C.reset}` : `  ${C.dim}  ${opt}${C.reset}`);
+      });
+      lines.push('');
+      if (hint) lines.push(`  ${C.dim}${hint}${C.reset}`);
+      return lines;
+    }
+    function render() {
+      const lines = build();
+      if (prevLen) out.write(`\x1b[${prevLen}A\x1b[0J`); // terug naar boven + wis naar beneden
+      out.write(lines.join('\n') + '\n');
+      prevLen = lines.length;
+    }
+    function finish(result) {
+      if (done) return;
+      done = true;
+      stdin.setRawMode?.(false);
+      stdin.pause();
+      stdin.removeListener('data', onData);
+      out.write(C.show + '\n');
+      resolve(result);
+    }
+    function onData(buf) {
+      const s = buf.toString();
+      const n = options.length;
+      if (s === '\x03' || s === '\x1b') return finish(-1); // Ctrl-C / Esc
+      if (s === '\r' || s === '\n') return finish(sel); // Enter
+      if (s === '\x1b[A' || s === '\x1bOA' || s === 'k') { sel = (sel - 1 + n) % n; render(); return; }
+      if (s === '\x1b[B' || s === '\x1bOB' || s === 'j') { sel = (sel + 1) % n; render(); return; }
+      const num = parseInt(s, 10);
+      if (num >= 1 && num <= n) { sel = num - 1; return finish(sel); }
+    }
+
+    out.write(C.hide);
+    render();
+    stdin.setRawMode?.(true);
+    stdin.resume();
+    stdin.on('data', onData);
   });
 }
 
@@ -147,8 +195,12 @@ async function maybeUpdate() {
     return false;
   }
 
-  const antwoord = await askLine(`Er ${info.behind === 1 ? 'is' : 'zijn'} ${aantal} beschikbaar. Bijwerken? (j = ja, Enter = overslaan): `);
-  if (!['j', 'ja', 'y', 'yes'].includes(antwoord)) return false;
+  const keuze = await promptMenu({
+    title: `✨  Er ${info.behind === 1 ? 'is' : 'zijn'} ${aantal} beschikbaar voor CueGo`,
+    subtitle: 'CueGo herstart even na het bijwerken.',
+    options: ['Nu bijwerken en herstarten', 'Overslaan en starten'],
+  });
+  if (keuze !== 0) return false; // overslaan of geannuleerd
 
   try {
     await git(['pull', '--ff-only'], 30000);
