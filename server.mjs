@@ -175,7 +175,9 @@ function promptMenu({ title = '', subtitle = '', options = [], hint = '↑/↓ k
       if (num >= 1 && num <= n) { sel = num - 1; return finish(sel); }
     }
 
-    out.write(C.hide);
+    // Scherm (en scrollback) leegmaken zodat er echt alleen het menu staat —
+    // geen commando-ruis of git-uitvoer eromheen.
+    out.write('\x1b[2J\x1b[3J\x1b[H' + C.hide);
     render();
     stdin.setRawMode?.(true);
     stdin.resume();
@@ -212,7 +214,9 @@ async function maybeUpdate() {
   }
 
   // De statische bestanden worden per verzoek van schijf gelezen, maar deze
-  // server.mjs draait nog de oude code — dus opnieuw starten.
+  // server.mjs draait nog de oude code — dus opnieuw starten. Scherm eerst leeg,
+  // zodat de herstart ook op een schone terminal begint.
+  process.stdout.write('\x1b[2J\x1b[3J\x1b[H');
   console.log('Bijgewerkt. CueGo start opnieuw…\n');
   const child = spawn(process.execPath, [fileURLToPath(import.meta.url)], { stdio: 'inherit', cwd: ROOT });
   child.on('exit', (code) => process.exit(code ?? 0));
