@@ -170,14 +170,28 @@ body.locked .project-title:hover { background: transparent; }
 .cuelist tbody tr.dragging { opacity: 0.35; }
 
 .col-num { width: 42px; color: var(--faint); font-variant-numeric: tabular-nums; text-align: right; padding-right: 14px; }
-.col-status { width: 22px; text-align: center; }
+.col-status { width: 24px; text-align: center; }
+.cuelist td.col-status { padding-left: 4px; padding-right: 4px; }
 .col-name { font-weight: 500; }
 .col-time { width: 56px; color: var(--muted); font-variant-numeric: tabular-nums; }
 .col-vol { width: 54px; color: var(--muted); font-variant-numeric: tabular-nums; }
 .col-progress { width: 190px; }
 
-.cuelist tbody tr.playing td.col-status::before { content: "▶"; color: var(--play); font-size: 10px; }
-.cuelist tbody tr.paused td.col-status::before { content: "❚❚"; color: var(--muted); font-size: 9px; letter-spacing: -1px; }
+/* Status-icoon in een vaste, altijd even brede doos — ook als de rij niets doet —
+   zodat het verschijnen of wisselen van het icoon de kolom (en dus de tabel) nooit
+   laat verspringen. Het teken zit centraal in de doos; breedte hangt niet van het teken af. */
+.cuelist td.col-status::before {
+  content: "";
+  display: inline-block;
+  width: 16px;
+  overflow: hidden;
+  font-size: 10px;
+  line-height: 1;
+  text-align: center;
+  vertical-align: middle;
+}
+.cuelist tbody tr.playing td.col-status::before { content: "▶"; color: var(--play); }
+.cuelist tbody tr.paused td.col-status::before { content: "❚❚"; color: var(--muted); letter-spacing: -1px; }
 .cuelist tbody tr.playing .col-name { color: var(--play); }
 
 .progress-track { height: 6px; background: rgba(255, 255, 255, 0.06); border-radius: 3px; overflow: hidden; }
