@@ -128,8 +128,10 @@ function render() {
   // draait de animatielus niet meer, dus die tekenen we hier één keer terug.
   drawVoiceFills();
   // Zijn wij niet de showcomputer, dan zegt onze eigen engine niets: de rijen en
-  // de balk krijgen de toestand van de showcomputer er weer overheen.
-  if (isFollower()) applyRemotePlayback();
+  // de balk krijgen de toestand van de showcomputer er weer overheen. Maar alleen
+  // zolang we verbonden zijn — bij serververlies spelen we zelf lokaal door en is
+  // onze eigen engine juist wél de bron van waarheid.
+  if (isFollower() && linkConnected) applyRemotePlayback();
   emit('statechange');
 }
 
@@ -2202,7 +2204,7 @@ function remotePos(info) {
 // Bewust géén render(): dat bouwt de hele lijst opnieuw op, en dit draait een
 // paar keer per seconde.
 function applyRemotePlayback() {
-  if (!showState) return;
+  if (!showState || !linkConnected) return; // offline → onze eigen (lokale) toestand telt
   for (const cue of cues.cues) {
     const row = cueBody.querySelector(`tr[data-id="${cue.id}"]`);
     if (!row) continue;
@@ -2286,6 +2288,10 @@ const FORWARD_CMDS = new Set(['go', 'play', 'playAll', 'stop', 'panic', 'pause',
 function forwardCommand(cmd, args) {
   if (!sharedShow || !appLink || appLink.isPrimary()) return false; // wij zijn de showcomputer
   if (!FORWARD_CMDS.has(cmd)) return false;
+  // Server onbereikbaar? Dan niet doorsturen naar een showcomputer die we toch niet
+  // kunnen bereiken — hier lokaal afspelen uit de IndexedDB-cache, zodat de show
+  // doorloopt. Bij terugkeer van de server nemen we weer de rol van meekijker aan.
+  if (!linkConnected) return false;
 
   let payload = args;
   if (cmd === 'go') {
@@ -2841,7 +2847,16 @@ async function initServerDetection() {
       onDevices: (info) => {
         devicesInfo = info;
         setLinkReady(true); // de server heeft onze rol doorgegeven → knop vrij
-        document.body.classList.toggle('is-showcomputer', info.showDeviceId === deviceId());
+        const weArePrimary = info.showDeviceId === deviceId();
+        document.body.classList.toggle('is-showcomputer', weArePrimary);
+        // Speelden we lokaal door tijdens een storing, en is er nu (weer) een ándere
+        // showcomputer? Dan geeft díe het geluid — faad het onze zacht weg om dubbel
+        // afspelen te voorkomen. Zijn wíj de showcomputer geworden (of is er nog geen),
+        // dan houden we ons geluid vast: dan zijn wij de bron.
+        if (info.showDeviceId && !weArePrimary && engine.voices.size > 0) {
+          engine.fadeOutAll(0.4);
+          render();
+        }
         renderDevices();
       },
     });
