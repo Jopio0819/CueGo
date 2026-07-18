@@ -447,21 +447,35 @@ body.link-connecting #playPauseBtn .ic-pause { display: none !important; }
    lokaal door, dus géén blokkade — wel een duidelijke banner bovenaan dat we
    offline zijn en opnieuw verbinden. */
 .offline-banner {
-  display: none;
+  /* Altijd in de layout, maar ingeklapt tot 0 hoogte als we online zijn — zo kan
+     hij bij offline vloeiend naar beneden schuiven (en bij reconnect weer omhoog). */
+  display: flex;
   align-items: center;
   justify-content: center;
   gap: 10px;
   flex: 0 0 auto;
-  padding: 9px 16px;
+  overflow: hidden;
+  max-height: 0;
+  padding: 0 16px;
+  opacity: 0;
   background: linear-gradient(180deg, #7a4a12, #6b3f0f);
   color: #ffe6c9;
   font-size: 13px;
   font-weight: 500;
   letter-spacing: 0.01em;
-  border-bottom: 1px solid rgba(255, 180, 100, 0.35);
+  border-bottom: 0 solid rgba(255, 180, 100, 0.35);
   box-shadow: 0 2px 12px rgba(0, 0, 0, 0.35);
+  transition: max-height 0.28s ease, padding 0.28s ease, opacity 0.2s ease, border-bottom-width 0.28s ease;
 }
-body.link-offline .offline-banner { display: flex; }
+body.link-offline .offline-banner {
+  max-height: 60px;
+  padding: 9px 16px;
+  opacity: 1;
+  border-bottom-width: 1px;
+}
+@media (prefers-reduced-motion: reduce) {
+  .offline-banner { transition: none; }
+}
 .offline-banner .dot {
   width: 9px;
   height: 9px;
