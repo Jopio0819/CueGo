@@ -607,18 +607,28 @@ async function openFadeInPrompt() {
 }
 
 // Voer een crossfade uit (van de bus; kan lokaal of doorgestuurd binnenkomen).
-function apiCrossfade(a) {
+async function apiCrossfade(a) {
   const cueA = resolveCue(a?.a);
   const cueB = resolveCue(a?.b);
   if (!cueA || !cueB) return;
   const fade = Math.max(0, parseFloat(a?.fade) || 0);
   if (a?.now) {
-    // Directe overgang: wat nu speelt uitfaden, de volgende meteen infaden.
-    engine.fadeOutCue(cueA.id, fade);
-    playCue(cueB, { fadeIn: fade });
+    // Directe overgang: alles wat nu klinkt uitfaden over de crossfade-tijd en de
+    // volgende infaden. Bewust NIET via playCue — die zou in single-cue-modus het
+    // oude in 0,3s wegknippen i.p.v. het mee te laten faden (dan is er geen crossfade).
+    for (const id of [...engine.voices.keys()]) {
+      if (id !== cueB.id) engine.fadeOutCue(id, fade);
+    }
+    try {
+      await engine.play(cueB, { fadeIn: fade, onEnded: onCueEnded });
+    } catch (err) {
+      console.error('Kon cue niet afspelen:', cueB.name, err);
+      return;
+    }
     const bi = cues.cues.indexOf(cueB);
     if (bi !== -1) selectOnly(cueB.id, bi);
     render();
+    animateProgress();
     syncInspector();
     return;
   }
