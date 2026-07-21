@@ -1,0 +1,8 @@
+{
+  "name": "cuego-streamdeck",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "CueGo-plugin voor Stream Deck. Geen dependencies: draait op Node's standaardbibliotheek, net als de rest van CueGo.",
+  "main": "plugin.mjs"
+}

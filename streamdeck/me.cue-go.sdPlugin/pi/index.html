@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="nl">
+  <head>
+    <meta charset="utf-8" />
+    <title>CueGo</title>
+    <style>
+      /* Kleuren gelijk aan CueGo zelf (style.css), zodat het één geheel oogt. */
+      :root {
+        --bg: #14161c;
+        --elevated: #212530;
+        --line: #333a47;
+        --text: #e8eaf0;
+        --muted: #8b92a3;
+        --accent: #4c8dff;
+        --play: #35c88f;
+        --danger: #ff5c5c;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        padding: 12px;
+        background: var(--bg);
+        color: var(--text);
+        font: 13px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+      h2 {
+        margin: 0 0 4px;
+        font-size: 13px;
+        font-weight: 600;
+      }
+      p.hint { margin: 0 0 12px; color: var(--muted); font-size: 12px; }
+      label { display: block; margin-bottom: 10px; }
+      label > span { display: block; margin-bottom: 4px; color: var(--muted); font-size: 12px; }
+      input {
+        width: 100%;
+        padding: 6px 8px;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        background: var(--elevated);
+        color: var(--text);
+        font: inherit;
+      }
+      input:focus { outline: none; border-color: var(--accent); }
+      .row { display: flex; gap: 8px; }
+      .row > label:first-child { flex: 2; }
+      .row > label:last-child { flex: 1; }
+      button {
+        width: 100%;
+        padding: 7px 10px;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        background: var(--elevated);
+        color: var(--text);
+        font: inherit;
+        cursor: pointer;
+      }
+      button:hover { border-color: var(--accent); }
+      #status { margin-top: 8px; font-size: 12px; min-height: 1.4em; color: var(--muted); }
+      #status.ok { color: var(--play); }
+      #status.err { color: var(--danger); }
+      hr { border: none; border-top: 1px solid var(--line); margin: 14px 0; }
+    </style>
+  </head>
+  <body>
+    <h2>CueGo-server</h2>
+    <p class="hint">Geldt voor alle CueGo-knoppen. Het adres zie je in de terminal waar CueGo draait.</p>
+
+    <div class="row">
+      <label>
+        <span>Adres</span>
+        <input id="host" type="text" placeholder="127.0.0.1" autocomplete="off" />
+      </label>
+      <label>
+        <span>Poort</span>
+        <input id="port" type="number" placeholder="4321" />
+      </label>
+    </div>
+
+    <label>
+      <span>Admin-wachtwoord (leeg = geen slot)</span>
+      <input id="password" type="password" autocomplete="off" />
+    </label>
+
+    <button id="test">Verbinding testen</button>
+    <div id="status"></div>
+
+    <!-- Alleen zichtbaar bij de actie "Cue afspelen". -->
+    <div id="cueSection" hidden>
+      <hr />
+      <h2>Welke cue?</h2>
+      <p class="hint">Cuenummer (bv. <code>1.5</code>), volgnummer (<code>3</code>) of de naam van de cue.</p>
+      <label>
+        <span>Cue</span>
+        <input id="cue" type="text" autocomplete="off" />
+      </label>
+    </div>
+
+    <script>
+      let ws = null;
+      let uuid = null;
+      let actionInfo = null;
+      const $ = (id) => document.getElementById(id);
+
+      // Stream Deck roept deze functie aan zodra de Property Inspector opent.
+      function connectElgatoStreamDeckSocket(port, inPropertyInspectorUUID, registerEvent, info, inActionInfo) {
+        uuid = inPropertyInspectorUUID;
+        actionInfo = inActionInfo ? JSON.parse(inActionInfo) : null;
+
+        // De cue-instelling hoort alleen bij de actie "Cue afspelen".
+        if (actionInfo?.action === 'me.cue-go.streamdeck.playcue') {
+          $('cueSection').hidden = false;
+          $('cue').value = actionInfo?.payload?.settings?.cue || '';
+        }
+
+        ws = new WebSocket(`ws://127.0.0.1:${port}`);
+
+        ws.onopen = () => {
+          ws.send(JSON.stringify({ event: registerEvent, uuid }));
+          ws.send(JSON.stringify({ event: 'getGlobalSettings', context: uuid }));
+        };
+
+        ws.onmessage = (e) => {
+          let msg;
+          try { msg = JSON.parse(e.data); } catch { return; }
+
+          if (msg.event === 'didReceiveGlobalSettings') {
+            const s = msg.payload?.settings || {};
+            $('host').value = s.host || '';
+            $('port').value = s.port || '';
+            $('password').value = s.password || '';
+          }
+
+          // Antwoord op onze verbindingstest.
+          if (msg.event === 'sendToPropertyInspector') {
+            const p = msg.payload || {};
+            const el = $('status');
+            el.className = p.result === 'ok' ? 'ok' : 'err';
+            el.textContent =
+              p.result === 'ok' ? `Verbonden — "${p.projectName || 'CueGo'}", ${p.cues} cues.`
+              : p.result === 'auth' ? 'Onjuist admin-wachtwoord.'
+              : p.result === 'disabled' ? 'Afstandsbediening staat uit in CueGo.'
+              : p.result === 'offline' ? 'Geen verbinding — draait CueGo en klopt het adres?'
+              : 'Onverwacht antwoord van de server.';
+          }
+        };
+      }
+      // Stream Deck zoekt deze functie op het window-object.
+      window.connectElgatoStreamDeckSocket = connectElgatoStreamDeckSocket;
+
+      function saveGlobal() {
+        if (!ws || ws.readyState !== WebSocket.OPEN) return;
+        ws.send(JSON.stringify({
+          event: 'setGlobalSettings',
+          context: uuid,
+          payload: {
+            host: $('host').value.trim() || '127.0.0.1',
+            port: Number($('port').value) || 4321,
+            password: $('password').value,
+          },
+        }));
+      }
+
+      function saveCue() {
+        if (!ws || ws.readyState !== WebSocket.OPEN) return;
+        ws.send(JSON.stringify({
+          event: 'setSettings',
+          context: uuid,
+          payload: { cue: $('cue').value.trim() },
+        }));
+      }
+
+      for (const id of ['host', 'port', 'password']) {
+        $(id).addEventListener('change', saveGlobal);
+        $(id).addEventListener('blur', saveGlobal);
+      }
+      $('cue').addEventListener('change', saveCue);
+      $('cue').addEventListener('blur', saveCue);
+
+      $('test').addEventListener('click', () => {
+        saveGlobal(); // eerst opslaan, anders test je de oude instellingen
+        $('status').className = '';
+        $('status').textContent = 'Testen…';
+        // Even wachten zodat de plugin de nieuwe instellingen binnen heeft.
+        setTimeout(() => {
+          ws?.send(JSON.stringify({
+            event: 'sendToPlugin',
+            context: uuid,
+            action: actionInfo?.action || 'me.cue-go.streamdeck.go',
+            payload: { test: true },
+          }));
+        }, 150);
+      });
+    </script>
+  </body>
+</html>

@@ -1,0 +1,91 @@
+{
+  "$schema": "https://schemas.elgato.com/streamdeck/plugins/manifest.json",
+  "Name": "CueGo",
+  "Version": "1.0.0.0",
+  "Author": "CueGo",
+  "URL": "https://cue-go.me",
+  "Description": "Bedien een CueGo-show vanaf je Stream Deck: GO, stop, pauze, panic en cues kiezen. Toont live welke cue klaarstaat en wat er speelt.",
+  "Category": "CueGo",
+  "CategoryIcon": "imgs/category",
+  "Icon": "imgs/plugin",
+  "SDKVersion": 2,
+  "CodePath": "plugin.mjs",
+  "Nodejs": {
+    "Version": "20"
+  },
+  "Software": {
+    "MinimumVersion": "6.4"
+  },
+  "OS": [
+    { "Platform": "mac", "MinimumVersion": "12" },
+    { "Platform": "windows", "MinimumVersion": "10" }
+  ],
+  "Actions": [
+    {
+      "UUID": "me.cue-go.streamdeck.go",
+      "Name": "GO",
+      "Icon": "imgs/actions/go",
+      "Tooltip": "Start de geselecteerde cue. Toont welke cue klaarstaat.",
+      "PropertyInspectorPath": "pi/index.html",
+      "Controllers": ["Keypad"],
+      "States": [{ "Image": "imgs/keys/go", "TitleAlignment": "bottom" }]
+    },
+    {
+      "UUID": "me.cue-go.streamdeck.stop",
+      "Name": "Stop",
+      "Icon": "imgs/actions/stop",
+      "Tooltip": "Stop alles wat er speelt.",
+      "PropertyInspectorPath": "pi/index.html",
+      "Controllers": ["Keypad"],
+      "States": [{ "Image": "imgs/keys/stop", "TitleAlignment": "bottom" }]
+    },
+    {
+      "UUID": "me.cue-go.streamdeck.toggle",
+      "Name": "Pauze / Hervat",
+      "Icon": "imgs/actions/toggle",
+      "Tooltip": "Pauzeert of hervat. Toont wat er speelt en hoelang nog.",
+      "PropertyInspectorPath": "pi/index.html",
+      "Controllers": ["Keypad"],
+      "States": [
+        { "Image": "imgs/keys/toggle-play", "TitleAlignment": "bottom" },
+        { "Image": "imgs/keys/toggle-pause", "TitleAlignment": "bottom" }
+      ]
+    },
+    {
+      "UUID": "me.cue-go.streamdeck.panic",
+      "Name": "Panic",
+      "Icon": "imgs/actions/panic",
+      "Tooltip": "Alles direct uitfaden.",
+      "PropertyInspectorPath": "pi/index.html",
+      "Controllers": ["Keypad"],
+      "States": [{ "Image": "imgs/keys/panic", "TitleAlignment": "bottom" }]
+    },
+    {
+      "UUID": "me.cue-go.streamdeck.next",
+      "Name": "Volgende cue",
+      "Icon": "imgs/actions/next",
+      "Tooltip": "Selecteer de volgende cue in de lijst.",
+      "PropertyInspectorPath": "pi/index.html",
+      "Controllers": ["Keypad"],
+      "States": [{ "Image": "imgs/keys/next", "TitleAlignment": "bottom" }]
+    },
+    {
+      "UUID": "me.cue-go.streamdeck.prev",
+      "Name": "Vorige cue",
+      "Icon": "imgs/actions/prev",
+      "Tooltip": "Selecteer de vorige cue in de lijst.",
+      "PropertyInspectorPath": "pi/index.html",
+      "Controllers": ["Keypad"],
+      "States": [{ "Image": "imgs/keys/prev", "TitleAlignment": "bottom" }]
+    },
+    {
+      "UUID": "me.cue-go.streamdeck.playcue",
+      "Name": "Cue afspelen",
+      "Icon": "imgs/actions/playcue",
+      "Tooltip": "Speelt één bepaalde cue, ongeacht wat er geselecteerd is.",
+      "PropertyInspectorPath": "pi/index.html",
+      "Controllers": ["Keypad"],
+      "States": [{ "Image": "imgs/keys/playcue", "TitleAlignment": "bottom" }]
+    }
+  ]
+}
