@@ -67,7 +67,9 @@ const MIME = {
 const PUBLIC_DIRS = new Set(['src', 'assets']);
 const PUBLIC_FILES = new Set([
   'index.html', 'app.html', 'remote.html', '404.html',
-  'style.css', 'favicon.ico', 'robots.txt', 'sitemap.xml',
+  'style.css', 'favicon.ico',
+  // robots.txt niet: die wordt hierboven zelf beantwoord, met Disallow.
+  // sitemap.xml en CNAME evenmin: die horen bij cue-go.me, niet bij jouw server.
 ]);
 
 function isPublicAsset(safePath) {
@@ -1157,6 +1159,19 @@ const handleRequest = async (req, res) => {
         if (c.deviceId !== primaryDeviceId) sseSend(c, 'state', lastState);
       }
       json(res, 200, { ok: true, remotes: countRole('remote') });
+      return;
+    }
+
+    // Zelf-gehost is geen website. De robots.txt en sitemap.xml in de repo horen
+    // bij cue-go.me — die moeten in de hoofdmap staan omdat GitHub Pages ze daar
+    // verwacht, maar ze zeggen "Allow: /" en verwijzen naar een ander domein.
+    // Zou je CueGo voor een show naar buiten openzetten, dan nodigt je eigen
+    // showcomputer zoekmachines dus uit om hem te indexeren. Precies andersom:
+    // een cueplayer hoort nooit in een zoekmachine. sitemap.xml valt hier
+    // helemaal weg (staat niet in de allowlist en beschrijft een andere site).
+    if (urlPath === '/robots.txt') {
+      res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store' })
+        .end('User-agent: *\nDisallow: /\n');
       return;
     }
 

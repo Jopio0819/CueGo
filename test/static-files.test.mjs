@@ -38,7 +38,7 @@ function get(path) {
 const MOET_WERKEN = [
   '/', '/app.html', '/index.html', '/remote.html', '/404.html',
   '/style.css', '/src/app.js', '/src/control.js', '/src/audio-engine.js',
-  '/assets/logo.png', '/robots.txt', '/sitemap.xml',
+  '/assets/logo.png',
 ];
 
 // … en dit mag er niet uit, ook niet vanaf het LAN.
@@ -57,6 +57,8 @@ const MOET_DICHT = [
   '/package.json',
   '/streamdeck/me.cue-go.sdPlugin/plugin.mjs',
   '/.DS_Store',
+  '/sitemap.xml',        // hoort bij cue-go.me, niet bij een showcomputer
+  '/CNAME',              // idem: een GitHub Pages-bestand
   // Klassieke trucs om er alsnog langs te komen:
   '/src/../cert/key.pem',
   '/./cert/key.pem',
@@ -86,6 +88,14 @@ async function run() {
     const geblokkeerd = r.status === 404 || r.status === 403;
     check(`${p} is dicht`, geblokkeerd, `HTTP ${r.status}`);
   }
+
+  // Een cueplayer hoort niet in Google. Zet iemand CueGo naar buiten open, dan
+  // moet robots.txt crawlers wégsturen — niet de "Allow: /" van cue-go.me geven.
+  console.log('  -- robots.txt --');
+  const robots = await get('/robots.txt');
+  check('robots.txt wordt geserveerd', robots.status === 200, `HTTP ${robots.status}`);
+  check('robots.txt verbiedt indexeren', /Disallow:\s*\/\s*$/m.test(robots.body), JSON.stringify(robots.body));
+  check('robots.txt is niet die van cue-go.me', !robots.body.includes('cue-go.me') && !/Allow:\s*\//.test(robots.body), JSON.stringify(robots.body));
 
   // De sleutel mag onder geen enkele omstandigheid in een antwoord opduiken.
   console.log('  -- inhoudscontrole --');
