@@ -56,6 +56,30 @@ const MIME = {
   '.webp': 'image/webp',
 };
 
+// --- Wat mag er van schijf gelezen worden? ----------------------------------
+// Een allowlist, geen blocklist: de projectmap bevat te veel wat niemand hoort
+// te krijgen (cert/key.pem, .git, show/, projects/, backups die je er zelf
+// neerzet), en bij een blocklist vergeet je er vroeg of laat één. Alles wat de
+// app nodig heeft staat hieronder; de rest bestaat simpelweg niet.
+//
+// Audio en projecten gaan wél de deur uit, maar via /api/audio en /api/projects:
+// die hebben hun eigen controles.
+const PUBLIC_DIRS = new Set(['src', 'assets']);
+const PUBLIC_FILES = new Set([
+  'index.html', 'app.html', 'remote.html', '404.html',
+  'style.css', 'favicon.ico', 'robots.txt', 'sitemap.xml',
+]);
+
+function isPublicAsset(safePath) {
+  const rel = safePath.replace(/^[/\\]+/, '').replace(/\\/g, '/');
+  if (!rel) return false;
+  const delen = rel.split('/');
+  // Nooit verborgen bestanden of mappen (.git, .env, .DS_Store …).
+  if (delen.some((d) => d.startsWith('.'))) return false;
+  if (delen.length === 1) return PUBLIC_FILES.has(delen[0]);
+  return PUBLIC_DIRS.has(delen[0]);
+}
+
 // --- Projecten op schijf ----------------------------------------------------
 // Draai je lokaal, dan bewaren we shows als echte bestanden in projects/ — te
 // kopiëren en te backuppen. Statisch gehost gaat dit via IndexedDB in de browser.
@@ -1139,6 +1163,19 @@ const handleRequest = async (req, res) => {
     if (!filePath.startsWith(ROOT)) {
       res.writeHead(403).end('Forbidden');
       return;
+    }
+    // Alleen wat de webapp echt nodig heeft. De projectmap bevat namelijk ook
+    // dingen die niemand mag downloaden: cert/key.pem (de private sleutel van
+    // het https-certificaat), .git met de hele geschiedenis, show/ en projects/.
+    // "Het draait toch maar lokaal" gaat niet op — CueGo is juist bedoeld om op
+    // je LAN bereikbaar te zijn, dus alles hier is bereikbaar voor iedereen op
+    // dat netwerk.
+    // Precies dezelfde 404 als een bestand dat niet bestaat: zo verraadt het
+    // antwoord ook niet wat er wél op schijf staat.
+    if (!isPublicAsset(safePath)) {
+      const err = new Error('Not found');
+      err.code = 'ENOENT';
+      throw err;
     }
     const body = await readFile(filePath);
     const type = MIME[extname(filePath).toLowerCase()] || 'application/octet-stream';
