@@ -255,15 +255,27 @@ async function ensureCuegoCommand() {
     const aliasLine = `alias cuego='node "${server}"'`;
     const huidig = await readFile(profile, 'utf8').catch(() => '');
     if (huidig.includes(aliasLine)) return; // staat er al, met het juiste pad
+
+    const vorige = /^alias cuego='node "(.+)\/server\.mjs"'$/m.exec(huidig)?.[1];
     let nieuw;
     if (/^alias cuego=.*$/m.test(huidig)) {
-      // Alias bestaat maar wijst ergens anders heen (repo verplaatst) → bijwerken.
       nieuw = huidig.replace(/^alias cuego=.*$/m, aliasLine);
     } else {
       nieuw = `${huidig}\n# CueGo vanaf elke plek starten\n${aliasLine}\n`;
     }
     await writeFile(profile, nieuw);
-    console.log(`Commando "cuego" geïnstalleerd (${profile}) — nieuwe terminal, dan: cuego`);
+
+    // Wees eerlijk over wat er gebeurt. Heb je meer dan één kopie van CueGo staan,
+    // dan kaapt elke start het `cuego`-commando — en start je de volgende keer
+    // ongemerkt een andere (mogelijk oudere) versie. Dat moet je zien.
+    if (vorige && vorige !== ROOT.replace(/\/$/, '')) {
+      console.log('Let op: het commando "cuego" wees naar een andere map.');
+      console.log(`  was:  ${vorige}`);
+      console.log(`  nu:   ${ROOT.replace(/\/$/, '')}`);
+      console.log('  Heb je meerdere kopieën van CueGo staan? Dan start "cuego" voortaan deze.');
+    } else {
+      console.log(`Commando "cuego" geïnstalleerd (${profile}) — nieuwe terminal, dan: cuego`);
+    }
   } catch { /* stil */ }
 }
 
