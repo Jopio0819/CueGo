@@ -94,6 +94,30 @@ async function run() {
     check('de rest van het profiel blijft staan', rc.includes('export FOO=1') && rc.includes('export BAR=2'));
   }
 
+  // --- 3b. Meerdere oude aliassen: er mag er GEEN één blijven staan --------------
+  // Zsh weigert een functie te maken als er nog een alias met die naam is
+  // ("defining function based on alias") en geeft dan een parse-fout waardoor
+  // het hele profiel niet meer laadt. Eén vergeten regel is dus fataal.
+  {
+    const home = freshHome('meerdere-aliassen');
+    writeFileSync(join(home, '.zshrc'),
+      'export A=1\n'
+      + `alias cuego='node "/weg/een/server.mjs"'\n`
+      + 'export B=2\n'
+      + `alias cuego='node "/weg/twee/server.mjs"'\n`
+      + `alias cuego='node "/weg/drie/server.mjs"'\n`
+      + 'export C=3\n');
+    await runServer({ home, port: 4390 });
+    const rc = zshrc(home);
+    check('álle oude aliassen zijn weg', !/alias cuego=/.test(rc), rc.match(/alias cuego=.*/g)?.join(' | '));
+    check('de rest van het profiel blijft staan', ['export A=1', 'export B=2', 'export C=3'].every((l) => rc.includes(l)));
+
+    // De echte toets: laadt het profiel nog, en werkt cuego?
+    const res = spawnSync('/bin/zsh', ['-c', `source ${JSON.stringify(join(home, '.zshrc'))}; type cuego`], { encoding: 'utf8' });
+    check('het profiel laadt zonder parse-fout', !/parse error|defining function based on alias/.test(res.stderr), res.stderr.trim());
+    check('cuego is daarna de nieuwe functie', /cuego is a shell function/.test(res.stdout), res.stdout.trim());
+  }
+
   // --- 4. Commando hoort bij een ANDERE, nog bestaande installatie --------------
   {
     const home = freshHome('nietafpakken');

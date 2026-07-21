@@ -359,11 +359,16 @@ async function ensureCuegoCommand() {
       }
     }
 
-    // Oud blok of oude losse alias eruit, nieuw blok erin.
+    // Oude blokken en oude losse aliassen eruit, nieuw blok erin. Let op de /g:
+    // er mag er géén één blijven staan. Zsh weigert namelijk een functie te
+    // definiëren als er een alias met dezelfde naam bestaat ("defining function
+    // based on alias") — dan volgt een parse-fout en laadt het hele profiel niet
+    // meer. Eén vergeten regel maakt dus niet alleen `cuego` stuk, maar je hele
+    // shell-configuratie.
     let nieuw = huidig
-      .replace(new RegExp(`\\n?${BLOCK_START}[\\s\\S]*?${BLOCK_END}\\n?`), '\n')
-      .replace(/^# CueGo vanaf elke plek starten\n/m, '')
-      .replace(/^alias cuego=.*\n?/m, '');
+      .replace(new RegExp(`\\n?${BLOCK_START}[\\s\\S]*?${BLOCK_END}\\n?`, 'g'), '\n')
+      .replace(/^# CueGo vanaf elke plek starten\n/gm, '')
+      .replace(/^alias cuego=.*\n?/gm, '');
     nieuw = `${nieuw.replace(/\n+$/, '')}\n\n${blok}\n`;
     await writeFile(profile, nieuw);
 
