@@ -9,7 +9,7 @@ No backend, no account — it works offline, which is exactly what you want duri
 First time (also installs the `cuego` command and starts the server):
 
 ```bash
-git clone https://github.com/Jopio0819/cuego.git && cd cuego && node setup.mjs
+git clone https://github.com/Jopio0819/CueGo.git ~/cuego && node ~/cuego/setup.mjs
 ```
 
 After that, just type `cuego` from any directory (new terminal). The server installs that command

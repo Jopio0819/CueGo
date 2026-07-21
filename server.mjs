@@ -17,7 +17,7 @@
 import { createServer } from 'node:http';
 import { createServer as createHttpsServer } from 'node:https';
 import { readFile, writeFile, readdir, stat, mkdir, unlink } from 'node:fs/promises';
-import { extname, join, normalize } from 'node:path';
+import { dirname, extname, join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { networkInterfaces, homedir } from 'node:os';
 import { createSocket } from 'node:dgram';
@@ -224,59 +224,160 @@ async function maybeUpdate() {
 
 // --- Het cuego-commando -----------------------------------------------------
 // Elke start zorgt dat `cuego` bestaat — ook voor wie ooit alleen kloonde, en
-// op Windows, waar setup.mjs eerst niets kon. Idempotent, en een misser is
-// stil: een ontbrekend commando mag een start nooit breken.
-// Uitzetten kan met CUEGO_NO_ALIAS=1.
+// op Windows, waar setup.mjs eerst niets kon. Een misser is stil: een ontbrekend
+// commando mag een start nooit breken. Uitzetten kan met CUEGO_NO_ALIAS=1.
+//
+// Twee dingen zijn hier eerder misgegaan en worden nu bewust voorkomen:
+//
+// 1. Het commando was een kale alias naar een absoluut pad. Verdween die map,
+//    dan kreeg je een rauwe Node-stacktrace ("Cannot find module …"). Daarom is
+//    het nu een shell-functie die eerst kijkt of CueGo er nog staat.
+// 2. Elke start eigende zich het commando toe. Had je twee kopieën, dan startte
+//    `cuego` daarna ongemerkt de andere — mogelijk een oudere versie. Nu nemen we
+//    het alleen over als het vrij is of als de vorige map niet meer bestaat.
+//    Bewust wisselen kan met CUEGO_CLAIM=1.
+
+const INSTALL_CMD = 'git clone https://github.com/Jopio0819/CueGo.git ~/cuego && node ~/cuego/setup.mjs';
+const BLOCK_START = '# >>> CueGo >>>';
+const BLOCK_END = '# <<< CueGo <<<';
+
+// De shell-functie die in het profiel komt. Geen alias: een functie kan eerst
+// controleren of CueGo er nog is en anders iets leesbaars zeggen.
+function shellBlock(dir) {
+  const server = `${dir}/server.mjs`;
+  return [
+    BLOCK_START,
+    '# Start CueGo vanaf elke plek. Is CueGo weg, dan zegt hij dát,',
+    '# in plaats van een onleesbare Node-foutmelding.',
+    'cuego() {',
+    `  if [ ! -f ${JSON.stringify(server)} ]; then`,
+    `    echo "CueGo staat niet meer in ${dir}"`,
+    '    echo "Verplaatst? Start CueGo daar één keer; dan wijst \'cuego\' er weer heen."',
+    '    echo "Kwijt? Opnieuw installeren:"',
+    `    echo "  ${INSTALL_CMD}"`,
+    '    return 1',
+    '  fi',
+    `  node ${JSON.stringify(server)} "$@"`,
+    '}',
+    BLOCK_END,
+  ].join('\n');
+}
+
+// Naar welke installatie wijst het commando nu? Kent zowel het nieuwe blok als
+// de oude kale alias, zodat een bestaande installatie netjes meeverhuist.
+function currentCommandDir(profileText) {
+  return /^\s*node "(.+)\/server\.mjs" "\$@"$/m.exec(profileText)?.[1]
+    ?? /^alias cuego='node "(.+)\/server\.mjs"'$/m.exec(profileText)?.[1]
+    ?? null;
+}
 
 async function ensureCuegoCommand() {
   if (process.env.CUEGO_NO_ALIAS) return;
+  const dir = ROOT.replace(/[\\/]$/, '');
   const server = join(ROOT, 'server.mjs');
   try {
     if (process.platform === 'win32') {
       // WindowsApps staat standaard in het gebruikers-PATH en is schrijfbaar
       // zonder adminrechten. Een .cmd werkt in cmd én PowerShell — anders dan
       // een PowerShell-profiel, dat de standaard execution policy blokkeert.
-      const dir = join(process.env.LOCALAPPDATA || join(homedir(), 'AppData', 'Local'), 'Microsoft', 'WindowsApps');
-      const target = join(dir, 'cuego.cmd');
-      const inhoud = `@echo off\r\nnode "${server}" %*\r\n`;
-      if ((await readFile(target, 'utf8').catch(() => null)) === inhoud) return; // al goed
-      await mkdir(dir, { recursive: true });
+      const winDir = join(process.env.LOCALAPPDATA || join(homedir(), 'AppData', 'Local'), 'Microsoft', 'WindowsApps');
+      const target = join(winDir, 'cuego.cmd');
+      const inhoud = [
+        '@echo off',
+        `if not exist "${server}" (`,
+        `  echo CueGo staat niet meer in ${dir}`,
+        '  echo Kwijt? Opnieuw installeren:',
+        `  echo   ${INSTALL_CMD}`,
+        '  exit /b 1',
+        ')',
+        `node "${server}" %*`,
+        '',
+      ].join('\r\n');
+      const bestaand = await readFile(target, 'utf8').catch(() => null);
+      if (bestaand === inhoud) return; // al goed
+
+      // Wijst het naar een andere, nog bestaande installatie? Niet afpakken.
+      const anderPad = /^node "(.+)\\server\.mjs" %\*$/m.exec(bestaand || '')?.[1];
+      if (anderPad && anderPad !== server && !process.env.CUEGO_CLAIM && await readFile(anderPad, 'utf8').then(() => true).catch(() => false)) {
+        console.log(`Het commando "cuego" hoort bij ${anderPad.replace(/\\server\.mjs$/, '')}.`);
+        console.log('  Deze kopie laten we met rust. Wisselen? Start deze map één keer met:  CUEGO_CLAIM=1 node server.mjs');
+        return;
+      }
+      await mkdir(winDir, { recursive: true });
       await writeFile(target, inhoud);
       console.log('Commando "cuego" geïnstalleerd — start CueGo voortaan met: cuego');
       return;
     }
 
-    // macOS/Linux: alias in het profiel van de eigen shell.
+    // macOS/Linux: een functie in het profiel van de eigen shell.
     const shell = process.env.SHELL || '';
     const profile = shell.includes('zsh') ? join(homedir(), '.zshrc')
       : shell.includes('bash') ? join(homedir(), '.bashrc')
       : null;
     if (!profile) return; // onbekende shell → niet gokken
-    const aliasLine = `alias cuego='node "${server}"'`;
-    const huidig = await readFile(profile, 'utf8').catch(() => '');
-    if (huidig.includes(aliasLine)) return; // staat er al, met het juiste pad
 
-    const vorige = /^alias cuego='node "(.+)\/server\.mjs"'$/m.exec(huidig)?.[1];
-    let nieuw;
-    if (/^alias cuego=.*$/m.test(huidig)) {
-      nieuw = huidig.replace(/^alias cuego=.*$/m, aliasLine);
-    } else {
-      nieuw = `${huidig}\n# CueGo vanaf elke plek starten\n${aliasLine}\n`;
+    const huidig = await readFile(profile, 'utf8').catch(() => '');
+    const blok = shellBlock(dir);
+    if (huidig.includes(blok)) return; // staat er al, precies goed
+
+    const vorige = currentCommandDir(huidig);
+
+    // Hoort het commando bij een andere installatie die er nog gewoon staat?
+    // Dan blijven we ervan af: stilletjes overnemen is hoe je later ongemerkt
+    // een verouderde kopie start.
+    if (vorige && vorige !== dir && !process.env.CUEGO_CLAIM) {
+      const bestaatNog = await readFile(join(vorige, 'server.mjs'), 'utf8').then(() => true).catch(() => false);
+      if (bestaatNog) {
+        console.log(`Het commando "cuego" hoort bij ${vorige}`);
+        console.log(`  Deze kopie (${dir}) laten we het met rust.`);
+        console.log('  Wisselen? Start deze map één keer met:  CUEGO_CLAIM=1 node server.mjs');
+        return;
+      }
     }
+
+    // Oud blok of oude losse alias eruit, nieuw blok erin.
+    let nieuw = huidig
+      .replace(new RegExp(`\\n?${BLOCK_START}[\\s\\S]*?${BLOCK_END}\\n?`), '\n')
+      .replace(/^# CueGo vanaf elke plek starten\n/m, '')
+      .replace(/^alias cuego=.*\n?/m, '');
+    nieuw = `${nieuw.replace(/\n+$/, '')}\n\n${blok}\n`;
     await writeFile(profile, nieuw);
 
-    // Wees eerlijk over wat er gebeurt. Heb je meer dan één kopie van CueGo staan,
-    // dan kaapt elke start het `cuego`-commando — en start je de volgende keer
-    // ongemerkt een andere (mogelijk oudere) versie. Dat moet je zien.
-    if (vorige && vorige !== ROOT.replace(/\/$/, '')) {
-      console.log('Let op: het commando "cuego" wees naar een andere map.');
-      console.log(`  was:  ${vorige}`);
-      console.log(`  nu:   ${ROOT.replace(/\/$/, '')}`);
-      console.log('  Heb je meerdere kopieën van CueGo staan? Dan start "cuego" voortaan deze.');
+    if (vorige && vorige !== dir) {
+      console.log(`Het commando "cuego" wees naar ${vorige} — die map bestaat niet meer.`);
+      console.log(`  Wijst nu naar ${dir}.`);
     } else {
       console.log(`Commando "cuego" geïnstalleerd (${profile}) — nieuwe terminal, dan: cuego`);
     }
   } catch { /* stil */ }
+}
+
+// Kloon je CueGo opnieuw terwijl je ín een bestaande kloon staat, dan komt de
+// nieuwe kopie eronder te hangen: ~/cuego/cuego. Het oude installatiecommando
+// ("… && cd cuego && …") liet je precies daar achter, dus dat gebeurde makkelijk.
+// Ongedaan maken kunnen we het niet, maar zwijgen is erger: zonder melding draai
+// je maanden later ongemerkt een verouderde kopie.
+async function warnIfNested() {
+  const eigen = ROOT.replace(/[\\/]$/, '');
+  let dir = eigen;
+  for (let i = 0; i < 12; i++) {
+    const ouder = dirname(dir);
+    if (!ouder || ouder === dir) return; // bij de wortel
+    // Een CueGo-installatie herken je aan deze twee bestanden samen.
+    const isCueGo = await Promise.all([
+      readFile(join(ouder, 'server.mjs'), 'utf8').then(() => true).catch(() => false),
+      readFile(join(ouder, 'src', 'app.js'), 'utf8').then(() => true).catch(() => false),
+    ]).then(([a, b]) => a && b);
+    if (isCueGo) {
+      console.log('Let op: deze CueGo staat ín een andere CueGo-installatie.');
+      console.log(`  deze:   ${eigen}`);
+      console.log(`  binnen: ${ouder}`);
+      console.log('  Dat ontstaat door opnieuw te klonen terwijl je in de map staat.');
+      console.log('  Houd één installatie aan; anders start je later makkelijk een oude versie.');
+      return;
+    }
+    dir = ouder;
+  }
 }
 
 // --- Admin-wachtwoord -------------------------------------------------------
@@ -1183,6 +1284,7 @@ function printStartup() {
 // code), dan het wachtwoord vragen, dán pas luisteren — anders kan een apparaat
 // al verbinden voordat we weten of er een slot op zit.
 if (!(await maybeUpdate())) {
+  await warnIfNested();
   await ensureCuegoCommand();
   await loadPreferredShow(); // gekozen showcomputer overleeft een herstart
   await initAdminPassword();
