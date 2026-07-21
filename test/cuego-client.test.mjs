@@ -9,9 +9,9 @@
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { createClient, REASON } from '../me.cue-go.sdPlugin/cuego.mjs';
+import { createClient, REASON } from '../streamdeck/me.cue-go.sdPlugin/cuego.mjs';
 
-const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
+const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const PORT = 4397;
 const PASSWORD = 'geheim123';
 

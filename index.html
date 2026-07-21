@@ -228,7 +228,7 @@
             <button class="cmd-tab" type="button" data-os="win">Windows</button>
           </div>
           <div class="cmd">
-            <code id="cmd">git clone https://github.com/Jopio0819/CueGo.git ~/cuego &amp;&amp; node ~/cuego/setup.mjs</code>
+            <code id="cmd">git clone https://github.com/Jopio0819/CueGo.git ~/cuego &amp;&amp; node ~/cuego/setup.mjs --minimal</code>
             <button id="copyCmd" type="button" aria-label="Copy command">Copy</button>
           </div>
           <p class="selfhost-hint">Then open <code>https://localhost:4321</code> — it goes straight into the player. It serves over HTTPS so MIDI and multi-device work from any device on your network; the first time on each device, accept the one-off self-signed certificate warning (Advanced → Proceed). From your next terminal, just type <code>cuego</code> to start it again. It checks for updates on boot and asks before installing them.</p>
@@ -286,8 +286,8 @@
       // Per OS een eigen commando: Windows PowerShell 5 (de standaard) kent geen
       // && — daar scheiden we met ; (werkt in elke PowerShell).
       const COMMANDS = {
-        mac: 'git clone https://github.com/Jopio0819/CueGo.git ~/cuego && node ~/cuego/setup.mjs',
-        win: 'git clone https://github.com/Jopio0819/CueGo.git $HOME\\cuego; node $HOME\\cuego\\setup.mjs',
+        mac: 'git clone https://github.com/Jopio0819/CueGo.git ~/cuego && node ~/cuego/setup.mjs --minimal',
+        win: 'git clone https://github.com/Jopio0819/CueGo.git $HOME\\cuego; node $HOME\\cuego\\setup.mjs --minimal',
       };
       const tabs = [...document.querySelectorAll('.cmd-tab')];
       function setOs(os) {

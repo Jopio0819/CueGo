@@ -8,7 +8,7 @@
 
 import { createServer } from 'node:net';
 import { createHash } from 'node:crypto';
-import { connect } from '../me.cue-go.sdPlugin/ws.mjs';
+import { connect } from '../streamdeck/me.cue-go.sdPlugin/ws.mjs';
 
 const GUID = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11';
 let pass = 0, fail = 0;

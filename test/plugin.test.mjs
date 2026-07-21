@@ -17,7 +17,7 @@ import { dirname, join } from 'node:path';
 import { startFakeStreamDeck } from './fake-streamdeck.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const ROOT = join(HERE, '..', '..');
+const ROOT = join(HERE, '..');
 const PLUGIN = join(ROOT, 'streamdeck', 'me.cue-go.sdPlugin', 'plugin.mjs');
 const PORT = 4396;
 const PASSWORD = 'showtijd';
