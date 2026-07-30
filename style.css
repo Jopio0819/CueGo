@@ -200,6 +200,14 @@ body.locked .project-title:hover { background: transparent; }
 .cuelist tbody tr.type-wait:not(.playing):not(.paused) td.col-status::before { content: "⏱"; color: var(--muted); }
 .cuelist tbody tr.type-stop:not(.playing):not(.paused) td.col-status::before { content: "⏹"; color: var(--danger); }
 .cuelist tbody tr.type-fade:not(.playing):not(.paused) td.col-status::before { content: "▽"; color: var(--muted); }
+.cuelist tbody tr.type-group:not(.playing):not(.paused) td.col-status::before { content: "⊞"; color: var(--accent); }
+/* Groep-header valt iets op als map. */
+.cuelist tbody tr.type-group .col-name { font-weight: 600; }
+/* Uitklap-driehoekje vóór de groepsnaam. */
+.grp-toggle { display: inline-block; width: 14px; margin-left: -14px; color: var(--muted); cursor: pointer; user-select: none; font-size: 10px; }
+.grp-toggle:hover { color: var(--text); }
+/* Doelrij bij "in de groep laten vallen". */
+.cuelist tbody tr.drop-into { box-shadow: inset 0 0 0 2px var(--accent); background: var(--accent-soft); }
 /* De samenvatting van een besturings-cue (over de fade/volume-kolommen heen). */
 .cuelist td.col-typeinfo { color: var(--muted); font-style: italic; font-size: 12px; }
 

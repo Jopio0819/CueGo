@@ -94,12 +94,18 @@ function render() {
   cueListWrap.classList.toggle('has-cues', cues.cues.length > 0);
 
   cues.cues.forEach((cue, i) => {
+    // Zit deze cue in een ingeklapte groep? Dan niet tonen.
+    if (hiddenByCollapse(cue)) return;
+
     const type = cue.type || 'audio';
     const isAudio = type === 'audio';
+    const isGroup = type === 'group';
+    const depth = cues.depthOf(cue);
     const tr = document.createElement('tr');
     tr.dataset.id = cue.id;
     tr.draggable = !locked;
     tr.classList.add('type-' + type);
+    if (depth) tr.classList.add('nested');
     if (selection.has(cue.id)) tr.classList.add('selected');
     if (engine.isPlaying(cue.id) || controlActive(cue.id)) tr.classList.add('playing');
     else if (engine.isPaused(cue.id)) tr.classList.add('paused');
@@ -110,10 +116,14 @@ function render() {
       ? `<td class="col-time">${fmt(cue.fadeIn)}s</td><td class="col-time">${fmt(cue.fadeOut)}s</td><td class="col-vol">${Math.round(cue.volume * 100)}%</td>`
       : `<td class="col-typeinfo" colspan="3">${escapeHtml(cueSummary(cue))}</td>`;
 
+    // Groepen krijgen een uitklap-driehoek; alle rijen springen in op hun diepte.
+    const disclosure = isGroup ? `<span class="grp-toggle" data-toggle="${cue.id}">${cue.collapsed ? '▸' : '▾'}</span>` : '';
+    const pad = 8 + depth * 16;
+
     tr.innerHTML = `
       <td class="col-num">${cue.number ? escapeHtml(cue.number) : i + 1}</td>
       <td class="col-status"></td>
-      <td class="col-name">${escapeHtml(cue.name)}${cue.loop ? ` <span class="loop-badge">⟳${escapeHtml(cue.loopCount || '∞')}</span>` : ''}${cue.autoContinue ? ' <span class="loop-badge" title="Auto-doorgaan">↳</span>' : ''}</td>
+      <td class="col-name" style="padding-left:${pad}px">${disclosure}${escapeHtml(cue.name)}${cue.loop ? ` <span class="loop-badge">⟳${escapeHtml(cue.loopCount || '∞')}</span>` : ''}${cue.autoContinue ? ' <span class="loop-badge" title="Auto-doorgaan">↳</span>' : ''}</td>
       ${metaCells}
       <td class="col-progress"><div class="progress-track"><div class="progress-fill" data-fill="${cue.id}"></div></div></td>
     `;
@@ -123,6 +133,9 @@ function render() {
       selectOnly(cue.id, i);
       control.dispatch('play', { cue: cue.id }); // dubbelklik = starten (via de bus)
     });
+    // De uitklap-driehoek: groep in-/uitklappen (niet selecteren of starten).
+    const toggle = tr.querySelector('.grp-toggle');
+    if (toggle) toggle.addEventListener('click', (e) => { e.stopPropagation(); cue.collapsed = !cue.collapsed; render(); persist(); });
     // Dubbelklik op het #-vakje = nummer direct bewerken (niet starten).
     const numCell = tr.querySelector('.col-num');
     numCell.addEventListener('dblclick', (e) => { e.stopPropagation(); if (!locked) startInlineNumberEdit(numCell, cue); });
@@ -167,11 +180,27 @@ function startInlineNumberEdit(cell, cue) {
   input.addEventListener('blur', () => finish(true));
 }
 
+// Zit een cue in een ingeklapte (voor)groep? Dan hoort 'ie niet in de lijst.
+function hiddenByCollapse(cue) {
+  let p = cue.parentId ? cues.getById(cue.parentId) : null;
+  const seen = new Set();
+  while (p && !seen.has(p.id)) {
+    if (p.collapsed) return true;
+    seen.add(p.id);
+    p = p.parentId ? cues.getById(p.parentId) : null;
+  }
+  return false;
+}
+
 // Korte omschrijving van wat een besturings-cue doet (voor de lijst).
 function cueSummary(cue) {
   switch (cue.type) {
     case 'wait':
       return `Wacht ${fmt(Math.max(0, parseFloat(cue.waitTime) || 0))}s`;
+    case 'group': {
+      const n = cues.childrenOf(cue.id).length;
+      return `Groep · ${cue.mode === 'sequential' ? 'na elkaar' : 'tegelijk'} · ${n}`;
+    }
     case 'stop': {
       const fade = Math.max(0, parseFloat(cue.stopFade) || 0);
       const tgt = cue.target === 'all' ? 'alles' : targetName(cue.target);
@@ -288,6 +317,7 @@ function syncInspector() {
   showSection('wait', type === 'wait');
   showSection('stop', type === 'stop');
   showSection('fade', type === 'fade');
+  showSection('group', type === 'group');
   showSection('region', isAudio);
   showSection('fades', isAudio);
   showSection('audio', isAudio);
@@ -309,6 +339,11 @@ function syncInspector() {
     $('insFadeToVal').textContent = `${Math.round((cue.fadeTo ?? 0) * 100)}%`;
     $('insFadeTime').value = cue.fadeTime ?? 3;
     $('insFadeStopAfter').checked = !!cue.stopAfter;
+  }
+  if (type === 'group') {
+    $('insGroupMode').value = cue.mode === 'sequential' ? 'sequential' : 'simultaneous';
+    const n = cues.childrenOf(cue.id).length;
+    $('insGroupCount').textContent = n === 1 ? '1 cue' : `${n} cues`;
   }
 
   if (isAudio) { showInspectorDuration(cue); syncEqStatus(); syncPreviewBar(); }
@@ -567,6 +602,14 @@ function bindInspector() {
     persist();
   });
 
+  // Groep: afspeelmodus.
+  $('insGroupMode').addEventListener('change', (e) => {
+    const v = e.target.value === 'sequential' ? 'sequential' : 'simultaneous';
+    applyToSelected((c) => { if (c.type === 'group') c.mode = v; });
+    render();
+    persist();
+  });
+
   // Auto-doorgaan (op alle geselecteerde cues).
   $('insAutoContinue').addEventListener('change', (e) => {
     const on = e.target.checked;
@@ -592,10 +635,16 @@ function deleteSelected() {
   if (locked) return;
   const ids = selection.size ? [...selection] : (cues.selected ? [cues.selected.id] : []);
   ids.forEach((id) => {
-    engine.fadeOutCue(id, 0.05);
+    // Een groep neemt z'n kinderen mee — stop en wis ook hun audio/runtime.
+    const r = cues.subtreeRange(id);
+    const subIds = r ? cues.cues.slice(r.start, r.end).map((c) => c.id) : [id];
+    for (const sid of subIds) {
+      engine.fadeOutCue(sid, 0.05);
+      stopControl(sid);
+      deleteAudio(sid).catch(() => {});
+      if (sharedShow) showSync.deleteAudio(sid); // ook van de server af
+    }
     cues.remove(id);
-    deleteAudio(id).catch(() => {});
-    if (sharedShow) showSync.deleteAudio(id); // ook van de server af
   });
   selection.clear();
   if (cues.selected) selection.add(cues.selected.id);
@@ -610,11 +659,28 @@ function deleteSelected() {
 // weggefade/gestopt) selecteren we alvast de volgende cue — zonder die te spelen.
 function onCueEnded(cue, info) {
   if (cue) emit('cueend', { id: cue.id, number: cue.number, name: cue.name, natural: !!info?.natural });
+
+  // Sequentiële groep: eindigt een kind, start dan het volgende kind in die groep.
+  // Is het het laatste kind, dan is de groep zelf klaar (die rondt dan pas af).
+  if (info?.natural && cue?.parentId) {
+    const parent = cues.getById(cue.parentId);
+    if (parent && parent.type === 'group' && parent.mode === 'sequential' && sequentialGroups.has(parent.id)) {
+      const sibs = cues.childrenOf(parent.id);
+      const pos = sibs.findIndex((c) => c.id === cue.id);
+      const next = pos !== -1 ? sibs[pos + 1] : null;
+      if (next) { playCue(next); render(); return; }
+      sequentialGroups.delete(parent.id);
+      finishControlCue(parent, true); // laatste kind klaar → groep afronden
+      return;
+    }
+  }
+
   if (info?.natural && cue) {
-    const idx = cues.cues.findIndex((c) => c.id === cue.id);
-    if (idx !== -1 && idx + 1 < cues.cues.length) {
-      const next = cues.cues[idx + 1];
-      selectOnly(next.id, idx + 1);
+    const r = cues.subtreeRange(cue.id);
+    const nextIdx = r ? r.end : cues.cues.findIndex((c) => c.id === cue.id) + 1; // groep slaat z'n kinderen over
+    if (nextIdx >= 1 && nextIdx < cues.cues.length) {
+      const next = cues.cues[nextIdx];
+      selectOnly(next.id, nextIdx);
       syncInspector();
       // Auto-doorgaan: na de wachttijd de volgende cue starten (zoals GO).
       if (cue.autoContinue) {
@@ -643,8 +709,11 @@ function fadeOutOthers(exceptId, seconds = 0.3) {
 // spelende audio-cue: rij licht op, voortgangsbalk telt. Bewust los van de
 // audio-engine — dit is orkestratie, geen geluid.
 const controlRuntime = new Map(); // cueId → { startedAt, duration, timer }
+// Sequentiële groepen die nog "lopen" (kind na kind afspelen). Ze hebben geen
+// vaste duur, dus geen timer — ze staan actief tot hun laatste kind klaar is.
+const sequentialGroups = new Set();
 
-function controlActive(id) { return controlRuntime.has(id); }
+function controlActive(id) { return controlRuntime.has(id) || sequentialGroups.has(id); }
 function controlElapsed(id) {
   const r = controlRuntime.get(id);
   return r ? Math.min(r.duration, (performance.now() - r.startedAt) / 1000) : 0;
@@ -657,7 +726,10 @@ function stopControl(id) {
   clearTimeout(r.timer);
   controlRuntime.delete(id);
 }
-function stopAllControl() { for (const id of [...controlRuntime.keys()]) stopControl(id); }
+function stopAllControl() {
+  for (const id of [...controlRuntime.keys()]) stopControl(id);
+  sequentialGroups.clear();
+}
 
 // Start een aftel-fase voor een cue en roep `onComplete` aan als 'ie afloopt. De
 // UI toont de cue ondertussen als lopend (rij licht op, voortgangsbalk telt af).
@@ -690,8 +762,27 @@ function runControlCue(cue) {
         finishControlCue(cue, true);
       });
       break;
+    case 'group':
+      runGroupCue(cue);
+      break;
     default:
       finishControlCue(cue, true); // nog geen gedrag → gewoon doorschuiven
+  }
+}
+
+// Groep-cue: vuurt z'n directe kinderen af. Tegelijk (simultaneous) of na elkaar
+// (sequential). Een kind kan zelf een groep zijn — dat regelt playCue vanzelf.
+function runGroupCue(cue) {
+  const kids = cues.childrenOf(cue.id);
+  if (!kids.length) { finishControlCue(cue, true); return; }
+  if (cue.mode === 'sequential') {
+    // Blijf "lopen" tot het laatste kind klaar is; onCueEnded start het volgende.
+    sequentialGroups.add(cue.id);
+    playCue(kids[0]);
+    render();
+  } else {
+    for (const k of kids) playCue(k); // allemaal tegelijk
+    finishControlCue(cue, true);
   }
 }
 
@@ -1495,16 +1586,29 @@ function addFiles(fileList) {
 // model-bouwer i.p.v. de bestand-route.
 function addCueOfType(type) {
   if (locked) return;
-  const names = { wait: 'Wacht', stop: 'Stop', fade: 'Fade' };
+  const names = { wait: 'Wacht', stop: 'Stop', fade: 'Fade', group: 'Groep' };
   const extra = type === 'stop' ? { target: 'all' } : {}; // een stop-cue stopt standaard alles
   const cue = baseCue({ type, name: names[type] || type, ...extra });
   cues.addExisting(cue);
-  const idx = cues.cues.length - 1;
-  selectOnly(cue.id, idx);
+  selectOnly(cue.id, cues.cues.length - 1);
   render();
   syncInspector();
   persist();
   return cue;
+}
+
+// Bundel de geselecteerde cues in een nieuwe groep (op de plek van de eerste).
+function groupSelection() {
+  if (locked) return;
+  const ids = selection.size ? [...selection] : (cues.selected ? [cues.selected.id] : []);
+  if (!ids.length) return;
+  const group = baseCue({ type: 'group', name: 'Groep' });
+  const made = cues.groupCues(ids, group);
+  if (!made) return;
+  selectOnly(group.id, cues.cues.findIndex((c) => c.id === group.id));
+  render();
+  syncInspector();
+  persist();
 }
 
 async function pickFolder() {
@@ -1542,6 +1646,8 @@ function bindLoaders() {
   $('addWaitCue').addEventListener('click', () => { closeMenus(); addCueOfType('wait'); });
   $('addStopCue').addEventListener('click', () => { closeMenus(); addCueOfType('stop'); });
   $('addFadeCue').addEventListener('click', () => { closeMenus(); addCueOfType('fade'); });
+  $('addGroupCue').addEventListener('click', () => { closeMenus(); addCueOfType('group'); });
+  $('groupSelBtn').addEventListener('click', () => { closeMenus(); groupSelection(); });
   $('fileInput').addEventListener('change', (e) => { addFiles(e.target.files); e.target.value = ''; });
   // Terugval-map-invoer (zonder secure context). Levert álle bestanden uit de map
   // en submappen; addFiles filtert de audio er zelf uit.
@@ -1588,6 +1694,26 @@ function showDropLine(tr, after) {
 }
 function hideDropLine() { dropLine.hidden = true; }
 
+// Rij die nu als "erin nesten"-doelwit oplicht (drop op de onderste helft van een
+// groep). Los van de invoeglijn, die tussen rijen valt.
+let dropIntoEl = null;
+function setDropInto(el) {
+  if (dropIntoEl === el) return;
+  dropIntoEl?.classList.remove('drop-into');
+  dropIntoEl = el;
+  dropIntoEl?.classList.add('drop-into');
+}
+
+// Waar valt de gesleepte cue t.o.v. deze rij? Op een groep: onderste helft = erín
+// nesten, bovenste helft = ervóór (als broer). Op een gewone cue: half om half
+// ervóór/erná.
+function dropModeFor(tr, cue, clientY) {
+  const rect = tr.getBoundingClientRect();
+  const lower = clientY > rect.top + rect.height / 2;
+  if (cue?.type === 'group') return lower ? 'into' : 'before';
+  return lower ? 'after' : 'before';
+}
+
 function bindRowDrag(tr, cueId) {
   tr.addEventListener('dragstart', (e) => {
     dragCueId = cueId;
@@ -1595,22 +1721,25 @@ function bindRowDrag(tr, cueId) {
     e.dataTransfer.effectAllowed = 'move';
     e.dataTransfer.setData('application/x-webqlab-cue', cueId); // géén 'Files'-type
   });
-  tr.addEventListener('dragend', () => { tr.classList.remove('dragging'); hideDropLine(); dragCueId = null; });
+  tr.addEventListener('dragend', () => { tr.classList.remove('dragging'); hideDropLine(); setDropInto(null); dragCueId = null; });
   tr.addEventListener('dragover', (e) => {
     if (!dragCueId || dragCueId === cueId) return;
     e.preventDefault();
     e.dataTransfer.dropEffect = 'move';
-    const rect = tr.getBoundingClientRect();
-    showDropLine(tr, e.clientY > rect.top + rect.height / 2);
+    const mode = dropModeFor(tr, cues.getById(cueId), e.clientY);
+    if (mode === 'into') { hideDropLine(); setDropInto(tr); }
+    else { setDropInto(null); showDropLine(tr, mode === 'after'); }
   });
+  tr.addEventListener('dragleave', () => { if (dropIntoEl === tr) setDropInto(null); });
   tr.addEventListener('drop', (e) => {
     if (!dragCueId || dragCueId === cueId) return;
     e.preventDefault();
     e.stopPropagation();
-    const rect = tr.getBoundingClientRect();
-    const after = e.clientY > rect.top + rect.height / 2;
-    cues.reorder(dragCueId, cueId, after);
+    const mode = dropModeFor(tr, cues.getById(cueId), e.clientY);
+    if (mode === 'into') cues.reorder(dragCueId, cueId, false, true);
+    else cues.reorder(dragCueId, cueId, mode === 'after', false);
     hideDropLine();
+    setDropInto(null);
     render();
     syncInspector();
     persist();

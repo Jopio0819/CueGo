@@ -7,7 +7,7 @@
 //
 // Draaien:  node test/cue-types.test.mjs
 
-import { baseCue, createCue, cueToMeta, metaToCue, CUE_FIELDS, CUE_TYPES } from '../src/cue-model.js';
+import { baseCue, createCue, cueToMeta, metaToCue, CUE_FIELDS, CUE_TYPES, CueList } from '../src/cue-model.js';
 import { exportProject, importProject } from '../src/project.js';
 
 let pass = 0, fail = 0;
@@ -34,7 +34,7 @@ function sampleCue(type) {
     case 'wait': return baseCue({ ...common, waitTime: 7 });
     case 'stop': return baseCue({ ...common, target: 'cue-xyz', stopFade: 2.5 });
     case 'fade': return baseCue({ ...common, target: 'cue-abc', fadeTo: 0.3, fadeTime: 5, stopAfter: true });
-    case 'group': return baseCue({ ...common, mode: 'sequential', children: ['a', 'b', 'c'] });
+    case 'group': return baseCue({ ...common, mode: 'sequential', collapsed: true, parentId: 'p1' });
     case 'midi': return baseCue({ ...common, midiOut: { deviceId: 'dev1', messages: [{ status: 144, d1: 60, d2: 100 }] } });
     case 'osc': return baseCue({ ...common, oscOut: { host: '10.0.0.5', port: 8000, address: '/go', args: '1 2.5 hoi' } });
     case 'light': return baseCue({ ...common, dmx: { universe: 2, protocol: 'sacn', fadeTime: 3, channels: [{ ch: 1, value: 255 }] } });
@@ -57,10 +57,6 @@ console.log('  -- verse defaults --');
   const b = baseCue({ type: 'audio' });
   a.eq[0] = 99;
   check('twee cues delen geen eq-array', b.eq[0] === 0, `b.eq[0]=${b.eq[0]}`);
-  const g1 = baseCue({ type: 'group' });
-  const g2 = baseCue({ type: 'group' });
-  g1.children.push('x');
-  check('twee groups delen geen children-array', g2.children.length === 0, `len=${g2.children.length}`);
   const m1 = baseCue({ type: 'midi' });
   const m2 = baseCue({ type: 'midi' });
   m1.midiOut.messages.push({});
@@ -115,6 +111,52 @@ console.log('  -- projectbestand round-trip --');
   check('wait-cue heeft geen bestand', back[1].file === null);
   const bytes = new Uint8Array(await audioBack.file.arrayBuffer());
   check('audio-bytes kloppen', JSON.stringify([...bytes]) === JSON.stringify([1, 2, 3, 4, 5]), [...bytes].join(','));
+}
+
+// --- 6. Nesting: de boom-operaties van CueList -------------------------------
+console.log('  -- nesting (CueList) --');
+{
+  const L = new CueList();
+  const mk = (name, type = 'wait') => { const c = baseCue({ type, name }); L.addExisting(c); return c; };
+  const A = mk('A'), B = mk('B'), C = mk('C');
+
+  // Groepeer B en C in een nieuwe groep.
+  const G = baseCue({ type: 'group', name: 'G' });
+  L.groupCues([B.id, C.id], G);
+  check('groep komt op de plek van de eerste geselecteerde', L.cues.map((c) => c.name).join(',') === 'A,G,B,C', L.cues.map((c) => c.name).join(','));
+  check('kinderen krijgen de parentId van de groep', L.getById(B.id).parentId === G.id && L.getById(C.id).parentId === G.id);
+  check('diepte klopt (kind = 1)', L.depthOf(A) === 0 && L.depthOf(L.getById(B.id)) === 1);
+  check('subtree van de groep = header + 2 kinderen', L.subtreeRange(G.id).end - L.subtreeRange(G.id).start === 3);
+  check('childrenOf geeft de 2 kinderen in volgorde', L.childrenOf(G.id).map((c) => c.name).join(',') === 'B,C');
+
+  // advance vanaf de groep slaat de kinderen over.
+  const D = mk('D'); // top-level, achteraan → volgorde A,G,B,C,D
+  L.selectById(G.id); L.advance();
+  check('advance vanaf groep springt voorbij de kinderen naar D', L.selected.id === D.id, L.selected.name);
+
+  // Verwijder de groep → de kinderen gaan mee.
+  L.remove(G.id);
+  check('groep verwijderen neemt de kinderen mee', L.cues.map((c) => c.name).join(',') === 'A,D', L.cues.map((c) => c.name).join(','));
+}
+
+// Sleep-operaties (reorder): in een groep, eruit, en lus-preventie.
+{
+  const L = new CueList();
+  const mk = (name, type = 'wait') => { const c = baseCue({ type, name }); L.addExisting(c); return c; };
+  const A = mk('A'); const G = baseCue({ type: 'group', name: 'G' }); L.addExisting(G); const X = mk('X');
+  // volgorde nu: A, G, X
+
+  L.reorder(A.id, G.id, false, true); // A ín G
+  check('sleep-in-groep: A wordt kind van G', L.getById(A.id).parentId === G.id);
+  check('sleep-in-groep: volgorde G,A,X', L.cues.map((c) => c.name).join(',') === 'G,A,X', L.cues.map((c) => c.name).join(','));
+
+  L.reorder(A.id, X.id, false, false); // A eruit, vóór X (broer op topniveau)
+  check('sleep-eruit: A weer op topniveau', L.getById(A.id).parentId === '');
+  check('sleep-eruit: volgorde G,A,X', L.cues.map((c) => c.name).join(',') === 'G,A,X', L.cues.map((c) => c.name).join(','));
+
+  L.reorder(A.id, G.id, false, true); // A terug in G
+  L.reorder(G.id, A.id, false, true); // G in z'n eigen kind → moet geweigerd worden
+  check('lus voorkomen: groep niet in z\'n eigen kind', L.getById(G.id).parentId === '', L.getById(G.id).parentId);
 }
 
 console.log(`\n${fail === 0 ? '✅' : '❌'}  ${pass} geslaagd, ${fail} gefaald\n`);

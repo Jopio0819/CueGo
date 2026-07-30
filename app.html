@@ -34,6 +34,8 @@
           <button id="addWaitCue" title="Een cue die een tijd wacht en dan doorgaat">Wacht-cue</button>
           <button id="addStopCue" title="Stopt een andere cue (of alles)">Stop-cue</button>
           <button id="addFadeCue" title="Faadt een lopende cue naar een niveau">Fade-cue</button>
+          <button id="addGroupCue" title="Een lege groep om cues in te slepen">Groep-cue</button>
+          <button id="groupSelBtn" title="Bundel de geselecteerde cues in een groep">Groepeer selectie</button>
         </div>
       </div>
 
@@ -156,6 +158,20 @@
                 <span class="switch-track"></span>
                 <span class="switch-label">Stop na de fade<em>Zet de cue stil zodra 'ie is uitgefade</em></span>
               </label>
+            </div></div>
+          </section>
+
+          <section class="ins-section" data-section="group" hidden>
+            <button type="button" class="ins-head"><svg class="ins-caret" viewBox="0 0 12 12" aria-hidden="true"><path d="M4 2l4 4-4 4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" /></svg>Groep</button>
+            <div class="ins-anim"><div class="ins-body">
+              <label class="field">
+                <span>Afspelen</span>
+                <select id="insGroupMode">
+                  <option value="simultaneous">Tegelijk</option>
+                  <option value="sequential">Na elkaar</option>
+                </select>
+              </label>
+              <div class="field"><span>Inhoud</span><div id="insGroupCount" class="readonly-value">—</div></div>
             </div></div>
           </section>
 
