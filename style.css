@@ -143,6 +143,7 @@ body.locked .project-title:hover { background: transparent; }
 }
 .menu-panel button:hover { background: var(--accent-soft); }
 .menu-sep { height: 1px; margin: 4px 6px; background: var(--line); }
+.field-note { font-size: 12px; color: var(--muted); line-height: 1.4; }
 
 /* ---------- Layout ---------- */
 .layout { flex: 1; display: flex; min-height: 0; }
@@ -201,6 +202,8 @@ body.locked .project-title:hover { background: transparent; }
 .cuelist tbody tr.type-stop:not(.playing):not(.paused) td.col-status::before { content: "⏹"; color: var(--danger); }
 .cuelist tbody tr.type-fade:not(.playing):not(.paused) td.col-status::before { content: "▽"; color: var(--muted); }
 .cuelist tbody tr.type-group:not(.playing):not(.paused) td.col-status::before { content: "⊞"; color: var(--accent); }
+.cuelist tbody tr.type-midi:not(.playing):not(.paused) td.col-status::before { content: "♪"; color: var(--muted); }
+.cuelist tbody tr.type-osc:not(.playing):not(.paused) td.col-status::before { content: "◈"; color: var(--muted); }
 /* Groep-header valt iets op als map. */
 .cuelist tbody tr.type-group .col-name { font-weight: 600; }
 /* Uitklap-driehoekje vóór de groepsnaam. */

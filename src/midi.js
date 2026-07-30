@@ -56,14 +56,36 @@ export function createMidi({ onTrigger, onDevices } = {}) {
     onDevices?.(deviceNames());
   }
 
-  async function enable() {
+  // Zorg dat we MIDI-toegang hebben (vraagt 'm de eerste keer). Nodig voor zowel
+  // input (triggers) als output (MIDI-cues die berichten versturen).
+  async function ensureAccess() {
     if (!MIDI_SUPPORTED) throw new Error('Web MIDI wordt niet ondersteund in deze browser.');
     if (!access) {
       access = await navigator.requestMIDIAccess({ sysex: false });
       access.onstatechange = attach; // apparaat in-/uitpluggen tijdens de show
     }
+    return access;
+  }
+
+  async function enable() {
+    await ensureAccess();
     enabled = true;
     attach();
+  }
+
+  // --- Output (MIDI-cues) ---
+  function outputList() {
+    return access ? [...access.outputs.values()].map((o) => ({ id: o.id, name: o.name || 'MIDI-uitgang' })) : [];
+  }
+
+  // Stuur ruwe MIDI-bytes naar een uitgang. Zonder deviceId (of onbekend): de
+  // eerste beschikbare uitgang. Geeft terug of het lukte.
+  function send(deviceId, bytes) {
+    if (!access) return false;
+    let out = deviceId ? access.outputs.get(deviceId) : null;
+    if (!out) out = [...access.outputs.values()][0];
+    if (!out) return false;
+    try { out.send(bytes); return true; } catch { return false; }
   }
 
   function disable() {
@@ -75,9 +97,27 @@ export function createMidi({ onTrigger, onDevices } = {}) {
   return {
     enable,
     disable,
+    ensureAccess,
+    send,
     learn: (cb) => { learnCb = cb; },
     cancelLearn: () => { learnCb = null; },
     get enabled() { return enabled; },
     get devices() { return deviceNames(); },
+    get outputs() { return outputList(); },
   };
+}
+
+// Bouw de ruwe bytes voor een MIDI-cue-bericht. Kanaal is 1..16 in de UI, maar
+// 0-gebaseerd in het protocol. Program Change heeft geen tweede databyte.
+export function midiMessageBytes({ type, channel, data1, data2 }) {
+  const ch = Math.max(0, Math.min(15, (parseInt(channel, 10) || 1) - 1));
+  const d1 = Math.max(0, Math.min(127, parseInt(data1, 10) || 0));
+  const d2 = Math.max(0, Math.min(127, parseInt(data2, 10) || 0));
+  switch (type) {
+    case 'noteoff': return [0x80 | ch, d1, d2];
+    case 'cc': return [0xb0 | ch, d1, d2];
+    case 'pc': return [0xc0 | ch, d1];
+    case 'noteon':
+    default: return [0x90 | ch, d1, d2];
+  }
 }

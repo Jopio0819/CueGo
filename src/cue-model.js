@@ -36,8 +36,8 @@ export const CUE_TYPES = ['audio', 'group', 'fade', 'stop', 'wait', 'midi', 'osc
 // Fabrieksfuncties voor de niet-primitieve defaults, zodat elke cue z'n eigen
 // verse array/object krijgt (nooit een gedeelde referentie).
 const freshEq = () => [0, 0, 0, 0, 0, 0];
-const freshMidiOut = () => ({ deviceId: '', messages: [] });
-const freshOscOut = () => ({ host: '', port: 53000, address: '', args: '' });
+const freshMidiOut = () => ({ deviceId: '', type: 'noteon', channel: 1, data1: 60, data2: 100 });
+const freshOscOut = () => ({ host: '127.0.0.1', port: 53000, address: '', args: '' });
 const freshDmx = () => ({ universe: 1, protocol: 'artnet', fadeTime: 0, channels: [] });
 
 // DE plek waar de veldenlijst van een cue staat — één keer, niet vier keer.

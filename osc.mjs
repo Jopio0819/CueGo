@@ -58,6 +58,35 @@ export function parseOsc(buf) {
   return [{ address, args }];
 }
 
+// Bouw een OSC-pakket (adres + args) voor verzending — voor OSC-cues. args:
+// getallen (heel → int32, anders float32), booleans (T/F) en strings. Puur Node,
+// spiegelt parseOsc hierboven.
+export function encodeOsc(address, args = []) {
+  const pad = (buf) => { const rem = (4 - (buf.length % 4)) % 4; return rem ? Buffer.concat([buf, Buffer.alloc(rem)]) : buf; };
+  const ostr = (s) => pad(Buffer.concat([Buffer.from(String(s), 'ascii'), Buffer.from([0])]));
+  let tags = ',';
+  const argBufs = [];
+  for (const a of args) {
+    if (typeof a === 'boolean') { tags += a ? 'T' : 'F'; }
+    else if (typeof a === 'number' && Number.isInteger(a)) { tags += 'i'; const b = Buffer.alloc(4); b.writeInt32BE(a | 0); argBufs.push(b); }
+    else if (typeof a === 'number') { tags += 'f'; const b = Buffer.alloc(4); b.writeFloatBE(a); argBufs.push(b); }
+    else { tags += 's'; argBufs.push(ostr(a)); }
+  }
+  return Buffer.concat([ostr(String(address || '/')), ostr(tags), ...argBufs]);
+}
+
+// Zet een args-string ("1 2.5 hoi") om in getypeerde OSC-args: heel getal → int,
+// kommagetal → float, anders string. Zo hoeft de gebruiker geen types te kiezen.
+export function parseOscArgs(str) {
+  const s = String(str || '').trim();
+  if (!s) return [];
+  return s.split(/\s+/).map((tok) => {
+    if (/^-?\d+$/.test(tok)) return parseInt(tok, 10);
+    if (/^-?\d*\.\d+$/.test(tok)) return parseFloat(tok);
+    return tok;
+  });
+}
+
 // Vertaal een OSC-adres naar een CueGo-commando, of null als we 't niet kennen.
 // Het '/cuego'-voorvoegsel is optioneel, zodat QLab-stijl adressen (/cue/3/start,
 // /go, /panic) rechtstreeks werken.

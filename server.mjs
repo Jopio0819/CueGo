@@ -24,7 +24,7 @@ import { createSocket } from 'node:dgram';
 import { execFile, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
 import { randomBytes } from 'node:crypto';
-import { parseOsc, oscToCommand } from './osc.mjs';
+import { parseOsc, oscToCommand, encodeOsc } from './osc.mjs';
 import { generateCert } from './cert.mjs';
 
 const ROOT = fileURLToPath(new URL('.', import.meta.url));
@@ -1136,6 +1136,20 @@ const handleRequest = async (req, res) => {
       return;
     }
 
+    // OSC-cue: de showcomputer laat de server een OSC-pakket versturen (de browser
+    // kan zelf geen UDP). Alleen eigen clients; niet achter het remote-wachtwoord
+    // langs van buitenaf te misbruiken als open OSC-relay.
+    if (urlPath === '/api/osc-send') {
+      if (req.method !== 'POST') { json(res, 405, { error: 'Gebruik POST' }); return; }
+      const body = await readJson(req).catch(() => null);
+      if (!body || !body.address) { json(res, 400, { error: 'Verwacht { host, port, address, args }' }); return; }
+      const fromOwnClient = body.deviceId && appClients().some((c) => c.deviceId === body.deviceId);
+      if (!fromOwnClient && !remoteAuthOk(url, body)) { json(res, 401, { error: 'Onjuist wachtwoord' }); return; }
+      const ok = sendOsc(body.host, body.port, body.address, body.args);
+      json(res, ok ? 200 : 500, { ok });
+      return;
+    }
+
     if (urlPath === '/api/state') {
       if (req.method === 'GET') { json(res, 200, lastState || {}); return; }
       if (req.method !== 'POST') { json(res, 405, { error: 'Gebruik POST of GET' }); return; }
@@ -1271,6 +1285,22 @@ async function makeServer() {
 // UDP, dus we vertalen het hier en zetten het op dezelfde bus als de remote.
 
 let oscListening = false;
+
+// Uitgaande OSC (voor OSC-cues). De browser kan geen UDP, dus stuurt de show-
+// computer het pakket naar de server (/api/osc-send) en verstuurt die het hier.
+// Eén socket voor alle verzendingen, lui aangemaakt.
+let oscSendSock = null;
+function sendOsc(host, port, address, args) {
+  try {
+    if (!oscSendSock) oscSendSock = createSocket({ type: 'udp4' });
+    const packet = encodeOsc(address, Array.isArray(args) ? args : []);
+    oscSendSock.send(packet, Number(port) || 53000, String(host || '127.0.0.1'));
+    return true;
+  } catch (err) {
+    console.log(`OSC verzenden mislukt: ${err.message}`);
+    return false;
+  }
+}
 
 function startOsc() {
   if (!oscEnabled()) return;

@@ -36,6 +36,9 @@
           <button id="addFadeCue" title="Faadt een lopende cue naar een niveau">Fade-cue</button>
           <button id="addGroupCue" title="Een lege groep om cues in te slepen">Groep-cue</button>
           <button id="groupSelBtn" title="Bundel de geselecteerde cues in een groep">Groepeer selectie</button>
+          <div class="menu-sep"></div>
+          <button id="addMidiCue" title="Stuurt een MIDI-bericht naar een uitgang">MIDI-cue</button>
+          <button id="addOscCue" title="Stuurt een OSC-bericht (CueGo lokaal draaien)">OSC-cue</button>
         </div>
       </div>
 
@@ -172,6 +175,44 @@
                 </select>
               </label>
               <div class="field"><span>Inhoud</span><div id="insGroupCount" class="readonly-value">—</div></div>
+            </div></div>
+          </section>
+
+          <section class="ins-section" data-section="midiout" hidden>
+            <button type="button" class="ins-head"><svg class="ins-caret" viewBox="0 0 12 12" aria-hidden="true"><path d="M4 2l4 4-4 4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" /></svg>MIDI versturen</button>
+            <div class="ins-anim"><div class="ins-body">
+              <label class="field">
+                <span>Uitgang</span>
+                <select id="insMidiOutDevice"></select>
+              </label>
+              <div class="field-row">
+                <label class="field"><span>Type</span>
+                  <select id="insMidiType">
+                    <option value="noteon">Note On</option>
+                    <option value="noteoff">Note Off</option>
+                    <option value="cc">Control Change</option>
+                    <option value="pc">Program Change</option>
+                  </select>
+                </label>
+                <label class="field narrow"><span>Kanaal</span><input id="insMidiChannel" type="number" min="1" max="16" step="1" /></label>
+              </div>
+              <div class="field-row">
+                <label class="field"><span id="insMidiD1Label">Noot</span><input id="insMidiData1" type="number" min="0" max="127" step="1" /></label>
+                <label class="field" id="insMidiD2Field"><span id="insMidiD2Label">Velocity</span><input id="insMidiData2" type="number" min="0" max="127" step="1" /></label>
+              </div>
+            </div></div>
+          </section>
+
+          <section class="ins-section" data-section="oscout" hidden>
+            <button type="button" class="ins-head"><svg class="ins-caret" viewBox="0 0 12 12" aria-hidden="true"><path d="M4 2l4 4-4 4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" /></svg>OSC versturen</button>
+            <div class="ins-anim"><div class="ins-body">
+              <div class="field-row">
+                <label class="field"><span>Host / IP</span><input id="insOscHost" type="text" placeholder="127.0.0.1" autocomplete="off" /></label>
+                <label class="field narrow"><span>Poort</span><input id="insOscPort" type="number" min="1" max="65535" step="1" placeholder="53000" /></label>
+              </div>
+              <label class="field"><span>Adres</span><input id="insOscAddress" type="text" placeholder="/cue/1/go" autocomplete="off" /></label>
+              <label class="field"><span>Argumenten <em>(spatie-gescheiden)</em></span><input id="insOscArgs" type="text" placeholder="1 2.5 tekst" autocomplete="off" /></label>
+              <div id="insOscNote" class="field-note" hidden>OSC werkt alleen als CueGo lokaal draait (server nodig voor UDP).</div>
             </div></div>
           </section>
 

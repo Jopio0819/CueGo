@@ -9,6 +9,8 @@
 
 import { baseCue, createCue, cueToMeta, metaToCue, CUE_FIELDS, CUE_TYPES, CueList } from '../src/cue-model.js';
 import { exportProject, importProject } from '../src/project.js';
+import { encodeOsc, parseOsc, parseOscArgs } from '../osc.mjs';
+import { midiMessageBytes } from '../src/midi.js';
 
 let pass = 0, fail = 0;
 const check = (name, ok, extra = '') => {
@@ -35,7 +37,7 @@ function sampleCue(type) {
     case 'stop': return baseCue({ ...common, target: 'cue-xyz', stopFade: 2.5 });
     case 'fade': return baseCue({ ...common, target: 'cue-abc', fadeTo: 0.3, fadeTime: 5, stopAfter: true });
     case 'group': return baseCue({ ...common, mode: 'sequential', collapsed: true, parentId: 'p1' });
-    case 'midi': return baseCue({ ...common, midiOut: { deviceId: 'dev1', messages: [{ status: 144, d1: 60, d2: 100 }] } });
+    case 'midi': return baseCue({ ...common, midiOut: { deviceId: 'dev1', type: 'cc', channel: 3, data1: 74, data2: 64 } });
     case 'osc': return baseCue({ ...common, oscOut: { host: '10.0.0.5', port: 8000, address: '/go', args: '1 2.5 hoi' } });
     case 'light': return baseCue({ ...common, dmx: { universe: 2, protocol: 'sacn', fadeTime: 3, channels: [{ ch: 1, value: 255 }] } });
     default: return baseCue(common);
@@ -59,8 +61,12 @@ console.log('  -- verse defaults --');
   check('twee cues delen geen eq-array', b.eq[0] === 0, `b.eq[0]=${b.eq[0]}`);
   const m1 = baseCue({ type: 'midi' });
   const m2 = baseCue({ type: 'midi' });
-  m1.midiOut.messages.push({});
-  check('twee midi-cues delen geen midiOut-object', m2.midiOut.messages.length === 0);
+  m1.midiOut.data1 = 99;
+  check('twee midi-cues delen geen midiOut-object', m2.midiOut.data1 === 60, `m2=${m2.midiOut.data1}`);
+  const o1 = baseCue({ type: 'osc' });
+  const o2 = baseCue({ type: 'osc' });
+  o1.oscOut.address = '/x';
+  check('twee osc-cues delen geen oscOut-object', o2.oscOut.address === '', `o2=${o2.oscOut.address}`);
 }
 
 // --- 3. Achterwaartse compatibiliteit: oude show zonder `type` ---------------
@@ -157,6 +163,30 @@ console.log('  -- nesting (CueList) --');
   L.reorder(A.id, G.id, false, true); // A terug in G
   L.reorder(G.id, A.id, false, true); // G in z'n eigen kind → moet geweigerd worden
   check('lus voorkomen: groep niet in z\'n eigen kind', L.getById(G.id).parentId === '', L.getById(G.id).parentId);
+}
+
+// --- 7. OSC-uitsturen: encode → decode moet exact terugkomen -----------------
+console.log('  -- OSC encode/decode --');
+{
+  const args = parseOscArgs('1 2.5 hoi -3');
+  check('args-string wordt getypeerd (int/float/string)', JSON.stringify(args) === JSON.stringify([1, 2.5, 'hoi', -3]), JSON.stringify(args));
+  const [msg] = parseOsc(encodeOsc('/cue/3/go', args));
+  check('adres komt terug', msg.address === '/cue/3/go', msg.address);
+  check('int-arg komt terug', msg.args[0] === 1);
+  check('float-arg komt ~terug', Math.abs(msg.args[1] - 2.5) < 1e-6, String(msg.args[1]));
+  check('string-arg komt terug', msg.args[2] === 'hoi', msg.args[2]);
+  const [empty] = parseOsc(encodeOsc('/go', []));
+  check('bericht zonder args werkt', empty.address === '/go' && empty.args.length === 0);
+}
+
+// --- 8. MIDI-cue: de juiste bytes per berichttype ----------------------------
+console.log('  -- MIDI-bytes --');
+{
+  check('Note On kan.1 noot60 vel100', JSON.stringify(midiMessageBytes({ type: 'noteon', channel: 1, data1: 60, data2: 100 })) === JSON.stringify([0x90, 60, 100]));
+  check('Note Off kan.16', JSON.stringify(midiMessageBytes({ type: 'noteoff', channel: 16, data1: 60, data2: 0 })) === JSON.stringify([0x8f, 60, 0]));
+  check('CC kan.3 ctrl74 waarde64', JSON.stringify(midiMessageBytes({ type: 'cc', channel: 3, data1: 74, data2: 64 })) === JSON.stringify([0xb2, 74, 64]));
+  check('Program Change = 2 bytes', JSON.stringify(midiMessageBytes({ type: 'pc', channel: 1, data1: 5 })) === JSON.stringify([0xc0, 5]));
+  check('waarden worden geclampt (kanaal/data)', JSON.stringify(midiMessageBytes({ type: 'noteon', channel: 99, data1: 999, data2: -5 })) === JSON.stringify([0x9f, 127, 0]));
 }
 
 console.log(`\n${fail === 0 ? '✅' : '❌'}  ${pass} geslaagd, ${fail} gefaald\n`);

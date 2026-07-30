@@ -6,7 +6,7 @@ import { saveAudio, loadAudio, deleteAudio, saveMeta, loadMeta } from './storage
 import { exportProject, importProject } from './project.js';
 import { createControl, publicApi, detectServer } from './control.js';
 import { connectAppLink, deviceId, defaultDeviceLabel } from './net-remote.js';
-import { createMidi, describeSignature, MIDI_SUPPORTED } from './midi.js';
+import { createMidi, describeSignature, MIDI_SUPPORTED, midiMessageBytes } from './midi.js';
 import { createProjectStore } from './projects-store.js';
 
 const engine = new AudioEngine();
@@ -211,6 +211,14 @@ function cueSummary(cue) {
       const t = fmt(Math.max(0, parseFloat(cue.fadeTime) || 0));
       return `Fade ${targetName(cue.target)} → ${pct}% / ${t}s`;
     }
+    case 'midi': {
+      const m = cue.midiOut || {};
+      const label = { noteon: 'Note On', noteoff: 'Note Off', cc: 'CC', pc: 'PC' }[m.type] || 'Note On';
+      const d2 = m.type === 'pc' ? '' : ` v${m.data2 ?? 0}`;
+      return `MIDI ${label} ${m.data1 ?? 0}${d2} · kan. ${m.channel ?? 1}`;
+    }
+    case 'osc':
+      return `OSC ${(cue.oscOut?.address) || '(geen adres)'}`;
     default: return '';
   }
 }
@@ -318,6 +326,8 @@ function syncInspector() {
   showSection('stop', type === 'stop');
   showSection('fade', type === 'fade');
   showSection('group', type === 'group');
+  showSection('midiout', type === 'midi');
+  showSection('oscout', type === 'osc');
   showSection('region', isAudio);
   showSection('fades', isAudio);
   showSection('audio', isAudio);
@@ -345,9 +355,46 @@ function syncInspector() {
     const n = cues.childrenOf(cue.id).length;
     $('insGroupCount').textContent = n === 1 ? '1 cue' : `${n} cues`;
   }
+  if (type === 'midi') syncMidiOutInspector(cue);
+  if (type === 'osc') {
+    const o = cue.oscOut || {};
+    $('insOscHost').value = o.host || '';
+    $('insOscPort').value = o.port || '';
+    $('insOscAddress').value = o.address || '';
+    $('insOscArgs').value = o.args || '';
+    $('insOscNote').hidden = !!serverInfo; // geen server → melden dat OSC niet werkt
+  }
 
   if (isAudio) { showInspectorDuration(cue); syncEqStatus(); syncPreviewBar(); }
   syncCueMidi();
+}
+
+// MIDI-cue-inspector: apparaatlijst, bericht-velden, en het tweede databyte
+// verbergen bij Program Change (die heeft er geen).
+function syncMidiOutInspector(cue) {
+  const m = cue.midiOut || {};
+  const fillDevices = () => {
+    const outs = midi.outputs;
+    const opts = ['<option value="">Eerste beschikbare</option>'];
+    for (const o of outs) opts.push(`<option value="${escapeHtml(o.id)}">${escapeHtml(o.name)}</option>`);
+    $('insMidiOutDevice').innerHTML = opts.join('');
+    $('insMidiOutDevice').value = m.deviceId || '';
+  };
+  fillDevices();
+  // MIDI-toegang vragen zodat de uitgangen verschijnen (eenmalige browserprompt).
+  if (MIDI_SUPPORTED) midi.ensureAccess().then(() => { if (cues.selected === cue) fillDevices(); }).catch(() => {});
+
+  const type = ['noteon', 'noteoff', 'cc', 'pc'].includes(m.type) ? m.type : 'noteon';
+  $('insMidiType').value = type;
+  $('insMidiChannel').value = m.channel ?? 1;
+  $('insMidiData1').value = m.data1 ?? 0;
+  $('insMidiData2').value = m.data2 ?? 0;
+  // Labels + zichtbaarheid per type.
+  const d1Label = type === 'cc' ? 'Controller' : type === 'pc' ? 'Programma' : 'Noot';
+  const d2Label = type === 'cc' ? 'Waarde' : 'Velocity';
+  $('insMidiD1Label').textContent = d1Label;
+  $('insMidiD2Label').textContent = d2Label;
+  $('insMidiD2Field').hidden = type === 'pc';
 }
 
 // Vul een doel-dropdown met de andere cues (voor stop/fade). `includeAll` zet
@@ -610,6 +657,21 @@ function bindInspector() {
     persist();
   });
 
+  // MIDI-cue: bericht opbouwen (patch het midiOut-object van elke geselecteerde).
+  const setMidi = (patch) => applyToSelected((c) => { if (c.type === 'midi') c.midiOut = { ...(c.midiOut || {}), ...patch }; });
+  $('insMidiOutDevice').addEventListener('change', (e) => { setMidi({ deviceId: e.target.value }); persist(); });
+  $('insMidiType').addEventListener('change', (e) => { setMidi({ type: e.target.value }); render(); persist(); syncInspector(); });
+  $('insMidiChannel').addEventListener('input', (e) => { setMidi({ channel: clampInt(e.target.value, 1, 16) }); persist(); });
+  $('insMidiData1').addEventListener('input', (e) => { setMidi({ data1: clampInt(e.target.value, 0, 127) }); render(); persist(); });
+  $('insMidiData2').addEventListener('input', (e) => { setMidi({ data2: clampInt(e.target.value, 0, 127) }); render(); persist(); });
+
+  // OSC-cue: bestemming + bericht.
+  const setOsc = (patch) => applyToSelected((c) => { if (c.type === 'osc') c.oscOut = { ...(c.oscOut || {}), ...patch }; });
+  $('insOscHost').addEventListener('input', (e) => { setOsc({ host: e.target.value.trim() }); persist(); });
+  $('insOscPort').addEventListener('input', (e) => { setOsc({ port: clampInt(e.target.value, 1, 65535) }); persist(); });
+  $('insOscAddress').addEventListener('input', (e) => { setOsc({ address: e.target.value.trim() }); render(); persist(); });
+  $('insOscArgs').addEventListener('input', (e) => { setOsc({ args: e.target.value }); render(); persist(); });
+
   // Auto-doorgaan (op alle geselecteerde cues).
   $('insAutoContinue').addEventListener('change', (e) => {
     const on = e.target.checked;
@@ -630,6 +692,7 @@ function bindInspector() {
 
 function withSelected(fn) { const cue = cues.selected; if (cue) fn(cue); }
 function num(v, fallback) { const n = parseFloat(v); return Number.isNaN(n) ? fallback : n; }
+function clampInt(v, lo, hi) { return Math.max(lo, Math.min(hi, parseInt(v, 10) || 0)); }
 
 function deleteSelected() {
   if (locked) return;
@@ -765,9 +828,49 @@ function runControlCue(cue) {
     case 'group':
       runGroupCue(cue);
       break;
+    case 'midi':
+      runMidiCue(cue);
+      finishControlCue(cue, true); // versturen is direct klaar
+      break;
+    case 'osc':
+      runOscCue(cue);
+      finishControlCue(cue, true);
+      break;
     default:
       finishControlCue(cue, true); // nog geen gedrag → gewoon doorschuiven
   }
+}
+
+// MIDI-cue: stuur één MIDI-bericht naar de gekozen uitgang.
+function runMidiCue(cue) {
+  const m = cue.midiOut || {};
+  const bytes = midiMessageBytes(m);
+  const ok = midi.send(m.deviceId || '', bytes);
+  if (!ok) console.warn('MIDI-cue: geen uitgang beschikbaar (MIDI aan in instellingen? apparaat aangesloten?)');
+}
+
+// OSC-cue: laat de server het OSC-pakket versturen (de browser kan geen UDP).
+// Alleen zinvol als CueGo lokaal draait; op statische hosting is er geen server.
+function runOscCue(cue) {
+  const o = cue.oscOut || {};
+  if (!o.address) return;
+  if (!serverInfo) { console.warn('OSC-cue: alleen beschikbaar als CueGo lokaal draait (er is een server nodig om UDP te versturen).'); return; }
+  fetch('api/osc-send', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ host: o.host, port: o.port, address: o.address, args: parseOscArgsText(o.args), deviceId: deviceId() }),
+  }).catch((err) => console.warn('OSC-cue versturen mislukt:', err.message));
+}
+
+// "1 2.5 hoi" → [1, 2.5, "hoi"] met types (heel → int, komma → float, rest tekst).
+function parseOscArgsText(str) {
+  const s = String(str || '').trim();
+  if (!s) return [];
+  return s.split(/\s+/).map((t) => {
+    if (/^-?\d+$/.test(t)) return parseInt(t, 10);
+    if (/^-?\d*\.\d+$/.test(t)) return parseFloat(t);
+    return t;
+  });
 }
 
 // Groep-cue: vuurt z'n directe kinderen af. Tegelijk (simultaneous) of na elkaar
@@ -1586,7 +1689,7 @@ function addFiles(fileList) {
 // model-bouwer i.p.v. de bestand-route.
 function addCueOfType(type) {
   if (locked) return;
-  const names = { wait: 'Wacht', stop: 'Stop', fade: 'Fade', group: 'Groep' };
+  const names = { wait: 'Wacht', stop: 'Stop', fade: 'Fade', group: 'Groep', midi: 'MIDI', osc: 'OSC' };
   const extra = type === 'stop' ? { target: 'all' } : {}; // een stop-cue stopt standaard alles
   const cue = baseCue({ type, name: names[type] || type, ...extra });
   cues.addExisting(cue);
@@ -1648,6 +1751,8 @@ function bindLoaders() {
   $('addFadeCue').addEventListener('click', () => { closeMenus(); addCueOfType('fade'); });
   $('addGroupCue').addEventListener('click', () => { closeMenus(); addCueOfType('group'); });
   $('groupSelBtn').addEventListener('click', () => { closeMenus(); groupSelection(); });
+  $('addMidiCue').addEventListener('click', () => { closeMenus(); addCueOfType('midi'); });
+  $('addOscCue').addEventListener('click', () => { closeMenus(); addCueOfType('osc'); });
   $('fileInput').addEventListener('change', (e) => { addFiles(e.target.files); e.target.value = ''; });
   // Terugval-map-invoer (zonder secure context). Levert álle bestanden uit de map
   // en submappen; addFiles filtert de audio er zelf uit.
