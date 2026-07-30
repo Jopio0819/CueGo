@@ -142,6 +142,7 @@ body.locked .project-title:hover { background: transparent; }
   cursor: pointer;
 }
 .menu-panel button:hover { background: var(--accent-soft); }
+.menu-sep { height: 1px; margin: 4px 6px; background: var(--line); }
 
 /* ---------- Layout ---------- */
 .layout { flex: 1; display: flex; min-height: 0; }
@@ -193,6 +194,12 @@ body.locked .project-title:hover { background: transparent; }
 .cuelist tbody tr.playing td.col-status::before { content: "▶"; color: var(--play); }
 .cuelist tbody tr.paused td.col-status::before { content: "❚❚"; color: var(--muted); letter-spacing: -1px; }
 .cuelist tbody tr.playing .col-name { color: var(--play); }
+
+/* Type-icoon voor besturings-cues, maar alleen als de rij niets doet — speelt hij,
+   dan wint het ▶-teken hierboven (de cue "loopt" dan echt, bv. een aftellende wacht). */
+.cuelist tbody tr.type-wait:not(.playing):not(.paused) td.col-status::before { content: "⏱"; color: var(--muted); }
+/* De samenvatting van een besturings-cue (over de fade/volume-kolommen heen). */
+.cuelist td.col-typeinfo { color: var(--muted); font-style: italic; font-size: 12px; }
 
 .progress-track { height: 6px; background: rgba(255, 255, 255, 0.06); border-radius: 3px; overflow: hidden; }
 .progress-fill { height: 100%; width: 0%; background: var(--play); border-radius: 3px; }

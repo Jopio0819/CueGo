@@ -2,6 +2,8 @@
 // Audio-bytes gaan in IndexedDB (kan groot zijn); lichte metadata (naam, fades,
 // volume, volgorde) in localStorage. Zo hoef je na een refresh niets opnieuw te slepen.
 
+import { cueToMeta } from './cue-model.js';
+
 const DB_NAME = 'CueGo';
 const STORE = 'audio';
 const META_KEY = 'CueGo.cues.v1';
@@ -53,26 +55,11 @@ export function deleteAudio(id) {
   return tx('readwrite', (store) => store.delete(id));
 }
 
-// Lichte metadata (volgorde inbegrepen) — synchroon via localStorage.
+// Lichte metadata (volgorde inbegrepen) — synchroon via localStorage. Zelfde
+// serialisatie als de gedeelde show, zodat de veldenlijst maar op één plek staat
+// (CUE_FIELDS in cue-model.js).
 export function saveMeta(cues) {
-  const meta = cues.map((c) => ({
-    id: c.id,
-    number: c.number || '',
-    name: c.name,
-    fadeIn: c.fadeIn,
-    fadeOut: c.fadeOut,
-    fadeOutAtEnd: !!c.fadeOutAtEnd,
-    volume: c.volume,
-    loop: !!c.loop,
-    loopCount: c.loopCount || '',
-    loopCrossfade: c.loopCrossfade || 0,
-    inPoint: c.inPoint || 0,
-    outPoint: c.outPoint || '',
-    autoContinue: !!c.autoContinue,
-    autoContinueDelay: c.autoContinueDelay ?? 1,
-    midiTrigger: c.midiTrigger || '',
-    eq: Array.isArray(c.eq) ? c.eq.slice(0, 6).map(Number) : [0, 0, 0, 0, 0, 0],
-  }));
+  const meta = cues.map(cueToMeta);
   try {
     localStorage.setItem(META_KEY, JSON.stringify(meta));
   } catch {

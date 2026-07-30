@@ -30,6 +30,8 @@
         <div class="menu-panel">
           <button id="pickFolderBtn" title="Kies een map met audio (Chrome/Edge)">Map kiezen…</button>
           <button id="pickFilesBtn" title="Kies losse bestanden">Bestanden…</button>
+          <div class="menu-sep"></div>
+          <button id="addWaitCue" title="Een cue die een tijd wacht en dan doorgaat">Wacht-cue</button>
         </div>
       </div>
 
@@ -101,6 +103,16 @@
                 <span>Duur</span>
                 <div id="insDuration" class="readonly-value">—</div>
               </div>
+            </div></div>
+          </section>
+
+          <section class="ins-section" data-section="wait" hidden>
+            <button type="button" class="ins-head"><svg class="ins-caret" viewBox="0 0 12 12" aria-hidden="true"><path d="M4 2l4 4-4 4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" /></svg>Wachttijd</button>
+            <div class="ins-anim"><div class="ins-body">
+              <label class="field">
+                <span>Wachten (s)</span>
+                <input id="insWaitTime" type="number" min="0" step="0.5" placeholder="3" />
+              </label>
             </div></div>
           </section>
 

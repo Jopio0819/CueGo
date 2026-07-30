@@ -1,6 +1,6 @@
 // app.js — UI, toetsenbord, bestanden inladen en rendering voor de cue-player.
 import { AudioEngine, EQ_BANDS, EQ_MAX_DB } from './audio-engine.js';
-import { CueList, isAudioFile, cueToMeta, metaToCue } from './cue-model.js';
+import { CueList, isAudioFile, cueToMeta, metaToCue, baseCue } from './cue-model.js';
 import * as showSync from './show-sync.js';
 import { saveAudio, loadAudio, deleteAudio, saveMeta, loadMeta } from './storage.js';
 import { exportProject, importProject } from './project.js';
@@ -94,20 +94,27 @@ function render() {
   cueListWrap.classList.toggle('has-cues', cues.cues.length > 0);
 
   cues.cues.forEach((cue, i) => {
+    const type = cue.type || 'audio';
+    const isAudio = type === 'audio';
     const tr = document.createElement('tr');
     tr.dataset.id = cue.id;
     tr.draggable = !locked;
+    tr.classList.add('type-' + type);
     if (selection.has(cue.id)) tr.classList.add('selected');
-    if (engine.isPlaying(cue.id)) tr.classList.add('playing');
+    if (engine.isPlaying(cue.id) || controlActive(cue.id)) tr.classList.add('playing');
     else if (engine.isPaused(cue.id)) tr.classList.add('paused');
+
+    // Audio toont fades + volume; besturings-cues een korte samenvatting van wat
+    // ze doen (over die drie kolommen heen).
+    const metaCells = isAudio
+      ? `<td class="col-time">${fmt(cue.fadeIn)}s</td><td class="col-time">${fmt(cue.fadeOut)}s</td><td class="col-vol">${Math.round(cue.volume * 100)}%</td>`
+      : `<td class="col-typeinfo" colspan="3">${escapeHtml(cueSummary(cue))}</td>`;
 
     tr.innerHTML = `
       <td class="col-num">${cue.number ? escapeHtml(cue.number) : i + 1}</td>
       <td class="col-status"></td>
       <td class="col-name">${escapeHtml(cue.name)}${cue.loop ? ` <span class="loop-badge">⟳${escapeHtml(cue.loopCount || '∞')}</span>` : ''}${cue.autoContinue ? ' <span class="loop-badge" title="Auto-doorgaan">↳</span>' : ''}</td>
-      <td class="col-time">${fmt(cue.fadeIn)}s</td>
-      <td class="col-time">${fmt(cue.fadeOut)}s</td>
-      <td class="col-vol">${Math.round(cue.volume * 100)}%</td>
+      ${metaCells}
       <td class="col-progress"><div class="progress-track"><div class="progress-fill" data-fill="${cue.id}"></div></div></td>
     `;
 
@@ -158,6 +165,14 @@ function startInlineNumberEdit(cell, cue) {
     else if (e.key === 'Escape') finish(false);
   });
   input.addEventListener('blur', () => finish(true));
+}
+
+// Korte omschrijving van wat een besturings-cue doet (voor de lijst).
+function cueSummary(cue) {
+  switch (cue.type) {
+    case 'wait': return `Wacht ${fmt(Math.max(0, parseFloat(cue.waitTime) || 0))}s`;
+    default: return '';
+  }
 }
 
 function fmt(n) { return Number.isInteger(n) ? String(n) : n.toFixed(1); }
@@ -245,10 +260,23 @@ function syncInspector() {
   $('insAutoContinue').checked = !!cue.autoContinue;
   $('insAutoDelay').value = cue.autoContinueDelay ?? 1;
   $('autoContinueField').hidden = !cue.autoContinue;
-  showInspectorDuration(cue);
+
+  // Welke secties horen bij dit cue-type? Audio-secties verbergen we voor
+  // besturings-cues; die krijgen hun eigen sectie(s). Algemeen, auto-doorgaan en
+  // MIDI-trigger (een cue starten via MIDI) gelden voor elk type.
+  const type = cue.type || 'audio';
+  const isAudio = type === 'audio';
+  const showSection = (nm, on) => { const s = inspector.querySelector(`.ins-section[data-section="${nm}"]`); if (s) s.hidden = !on; };
+  showSection('wait', type === 'wait');
+  showSection('region', isAudio);
+  showSection('fades', isAudio);
+  showSection('audio', isAudio);
+  showSection('loop', isAudio);
+  $('insDuration').closest('.field').hidden = !isAudio; // "Duur" is audio-only
+  if (type === 'wait') $('insWaitTime').value = cue.waitTime ?? 3;
+
+  if (isAudio) { showInspectorDuration(cue); syncEqStatus(); syncPreviewBar(); }
   syncCueMidi();
-  syncEqStatus();
-  syncPreviewBar();
 }
 
 // Toon de audioduur in seconden (decodeert op de achtergrond als 'ie nog onbekend is).
@@ -428,6 +456,14 @@ function bindInspector() {
     syncPreviewBar();
   });
 
+  // Wachttijd (wacht-cue).
+  $('insWaitTime').addEventListener('input', (e) => {
+    const v = Math.max(0, num(e.target.value, 0));
+    applyToSelected((c) => { c.waitTime = v; });
+    render();
+    persist();
+  });
+
   // Auto-doorgaan (op alle geselecteerde cues).
   $('insAutoContinue').addEventListener('change', (e) => {
     const on = e.target.checked;
@@ -497,7 +533,55 @@ function fadeOutOthers(exceptId, seconds = 0.3) {
   }
 }
 
+// --- Besturings-cues uitvoeren -------------------------------------------------
+// Cues die geen geluid maken maar iets anders doen bij GO (nu: wacht; later stop,
+// fade, groep, midi, osc). Een deel "loopt" wel even (een wacht-cue telt af), dus
+// we houden een lichte runtime bij zodat de UI ze net zo behandelt als een
+// spelende audio-cue: rij licht op, voortgangsbalk telt. Bewust los van de
+// audio-engine — dit is orkestratie, geen geluid.
+const controlRuntime = new Map(); // cueId → { startedAt, duration, timer }
+
+function controlActive(id) { return controlRuntime.has(id); }
+function controlElapsed(id) {
+  const r = controlRuntime.get(id);
+  return r ? Math.min(r.duration, (performance.now() - r.startedAt) / 1000) : 0;
+}
+function controlDuration(id) { return controlRuntime.get(id)?.duration || 0; }
+
+function stopControl(id) {
+  const r = controlRuntime.get(id);
+  if (!r) return;
+  clearTimeout(r.timer);
+  controlRuntime.delete(id);
+}
+function stopAllControl() { for (const id of [...controlRuntime.keys()]) stopControl(id); }
+
+// Voer een besturings-cue uit. Vertakt op type; een type zonder gedrag (nog niet
+// geïmplementeerd) schuift meteen door, zodat er niets blijft hangen.
+function runControlCue(cue) {
+  emit('cuestart', { id: cue.id, number: cue.number, name: cue.name });
+  if (cue.type === 'wait') {
+    const secs = Math.max(0, parseFloat(cue.waitTime) || 0);
+    stopControl(cue.id); // nooit dubbel aftellen
+    const timer = setTimeout(() => finishControlCue(cue, true), secs * 1000);
+    controlRuntime.set(cue.id, { startedAt: performance.now(), duration: secs, timer });
+    render();
+    animateProgress();
+  } else {
+    finishControlCue(cue, true);
+  }
+}
+
+// De besturings-cue is klaar. Zelfde afronding als een audio-cue: onCueEnded
+// selecteert de volgende en verzorgt auto-doorgaan.
+function finishControlCue(cue, natural) {
+  controlRuntime.delete(cue.id);
+  onCueEnded(cue, { natural });
+}
+
 async function playCue(cue, opts = {}) {
+  // Niet-audio cues doen hun eigen ding en raken de audio-engine niet aan.
+  if ((cue.type || 'audio') !== 'audio') { runControlCue(cue); return; }
   if (settings.singleCueMode) fadeOutOthers(cue.id);
   try {
     await engine.play(cue, { onEnded: onCueEnded, ...opts });
@@ -669,10 +753,11 @@ function panic() {
   // Elke spelende cue faadt uit over zijn eigen fade-uit-tijd.
   const fades = [...engine.voices.values()].map((v) => Math.max(0, parseFloat(v.cue?.fadeOut) || 0));
   engine.fadeOutAll();
+  stopAllControl(); // aftellende wacht-cues e.d. ook stoppen
   const maxFade = fades.length ? Math.max(...fades) : 0;
   setTimeout(render, maxFade * 1000 + 200);
 }
-function hardStop() { engine.stopAll(); render(); }
+function hardStop() { engine.stopAll(); stopAllControl(); render(); }
 
 let lastEscAt = -1e9;
 function handleEsc() {
@@ -701,6 +786,15 @@ function drawVoiceFills() {
     const c = cues.getById(cueId);
     const dur = (c && engine.playLength(c)) || 1;
     const pct = Math.min(1, engine.position(cueId) / dur);
+    const fill = document.querySelector(`[data-fill="${cueId}"]`);
+    if (fill) fill.style.width = `${pct * 100}%`;
+  }
+  // Aftellende besturings-cues (bv. een wacht-cue) tekenen mee, zodat de
+  // voortgangsbalk loopt en de animatielus doordraait tot ze klaar zijn.
+  for (const cueId of controlRuntime.keys()) {
+    anyPlaying = true;
+    const dur = controlDuration(cueId) || 1;
+    const pct = Math.min(1, controlElapsed(cueId) / dur);
     const fill = document.querySelector(`[data-fill="${cueId}"]`);
     if (fill) fill.style.width = `${pct * 100}%`;
   }
@@ -1243,6 +1337,21 @@ function addFiles(fileList) {
   return added;
 }
 
+// Voeg een besturings-cue toe (geen bestand). Parallel aan addFiles, maar via de
+// model-bouwer i.p.v. de bestand-route.
+function addCueOfType(type) {
+  if (locked) return;
+  const names = { wait: 'Wacht' };
+  const cue = baseCue({ type, name: names[type] || type });
+  cues.addExisting(cue);
+  const idx = cues.cues.length - 1;
+  selectOnly(cue.id, idx);
+  render();
+  syncInspector();
+  persist();
+  return cue;
+}
+
 async function pickFolder() {
   // showDirectoryPicker vereist een secure context (https of localhost). Benader je
   // CueGo via een LAN-IP, dan bestaat 'ie niet — dan pakken we de klassieke
@@ -1275,6 +1384,7 @@ async function collectFiles(dirHandle, out) {
 function bindLoaders() {
   $('pickFolderBtn').addEventListener('click', () => { closeMenus(); pickFolder(); });
   $('pickFilesBtn').addEventListener('click', () => { closeMenus(); $('fileInput').click(); });
+  $('addWaitCue').addEventListener('click', () => { closeMenus(); addCueOfType('wait'); });
   $('fileInput').addEventListener('change', (e) => { addFiles(e.target.files); e.target.value = ''; });
   // Terugval-map-invoer (zonder secure context). Levert álle bestanden uit de map
   // en submappen; addFiles filtert de audio er zelf uit.
@@ -2194,6 +2304,7 @@ function apiSelect(dirOrCue) {
 // Reset (QLab-gedrag): alles direct stoppen en de playhead terug naar de eerste cue.
 function apiReset() {
   engine.stopAll();
+  stopAllControl();
   if (cues.cues.length) selectOnly(cues.cues[0].id, 0);
   render();
   syncInspector();
@@ -2222,17 +2333,21 @@ function apiState() {
     // alle apparaten tonen gegarandeerd hetzelfde.
     remoteEnabled: settings.remoteEnabled !== false,
     selectedId: cues.selected?.id ?? null,
-    cues: cues.cues.map((c, i) => ({
-      id: c.id,
-      index: i + 1,
-      number: c.number || '',
-      name: c.name,
-      selected: selection.has(c.id),
-      playing: engine.isPlaying(c.id),
-      paused: engine.isPaused(c.id),
-      position: engine.position(c.id) || 0,
-      duration: engine.playLength(c) || 0,
-    })),
+    cues: cues.cues.map((c, i) => {
+      const ctrl = controlActive(c.id);
+      return {
+        id: c.id,
+        index: i + 1,
+        number: c.number || '',
+        name: c.name,
+        type: c.type || 'audio',
+        selected: selection.has(c.id),
+        playing: engine.isPlaying(c.id) || ctrl,
+        paused: engine.isPaused(c.id),
+        position: ctrl ? controlElapsed(c.id) : (engine.position(c.id) || 0),
+        duration: ctrl ? controlDuration(c.id) : (engine.playLength(c) || 0),
+      };
+    }),
   };
 }
 
@@ -2816,14 +2931,18 @@ async function applyShow(show) {
   try {
     const next = [];
     for (const m of show.cues || []) {
-      let file = (await loadAudio(m.id)) || null; // lokale cache eerst
-      if (!file) {
-        file = await showSync.downloadAudio(m.id, m.fileName, m.fileType);
-        if (file) saveAudio(m.id, file).catch(() => {});
+      const type = m.type || 'audio';
+      let file = null;
+      if (type === 'audio') {
+        file = (await loadAudio(m.id)) || null; // lokale cache eerst
+        if (!file) {
+          file = await showSync.downloadAudio(m.id, m.fileName, m.fileType);
+          if (file) saveAudio(m.id, file).catch(() => {});
+        }
       }
       loaded += 1;
       setProgress();
-      if (!file) continue; // audio (nog) niet beschikbaar → cue overslaan
+      if (type === 'audio' && !file) continue; // audio (nog) niet beschikbaar → cue overslaan
       const existing = cues.getById(m.id);
       if (existing) {
         Object.assign(existing, metaToCue(m, existing.file || file));
@@ -3407,8 +3526,9 @@ async function restoreFromStorage() {
   const meta = loadMeta();
   if (!meta.length) return;
   for (const m of meta) {
-    const file = await loadAudio(m.id);
-    if (!file) continue;
+    const type = m.type || 'audio';
+    const file = type === 'audio' ? await loadAudio(m.id) : null;
+    if (type === 'audio' && !file) continue; // audio zonder bytes → overslaan
     cues.addExisting(metaToCue(m, file));
   }
   if (cues.cues.length) selectOnly(cues.cues[0].id, 0);

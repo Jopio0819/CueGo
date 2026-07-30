@@ -27,74 +27,117 @@ function compareByTitleNumber(a, b) {
   return a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' });
 }
 
+// De cue-soorten. 'audio' is de bestaande speler; de rest zijn besturings-cues
+// die geen eigen geluid maken maar iets anders doen bij GO. 'light' (DMX) is
+// gereserveerd — het veld bestaat al zodat opslag/serialisatie er klaar voor is,
+// maar de UI en het gedrag komen in een latere fase.
+export const CUE_TYPES = ['audio', 'group', 'fade', 'stop', 'wait', 'midi', 'osc', 'light'];
+
+// Fabrieksfuncties voor de niet-primitieve defaults, zodat elke cue z'n eigen
+// verse array/object krijgt (nooit een gedeelde referentie).
+const freshEq = () => [0, 0, 0, 0, 0, 0];
+const freshChildren = () => [];
+const freshMidiOut = () => ({ deviceId: '', messages: [] });
+const freshOscOut = () => ({ host: '', port: 53000, address: '', args: '' });
+const freshDmx = () => ({ universe: 1, protocol: 'artnet', fadeTime: 0, channels: [] });
+
+// DE plek waar de veldenlijst van een cue staat — één keer, niet vier keer.
+// createCue, cueToMeta, metaToCue, de opslag-cache (storage.js) en het
+// projectbestand (project.js) lopen hier allemaal overheen. Een nieuw veld
+// toevoegen = hier één regel. `def` is een waarde of een fabrieksfunctie;
+// `norm` normaliseert bij het inlezen (verdedigt tegen oude/rommelige data).
+export const CUE_FIELDS = [
+  // --- gemeenschappelijk (elk cue-type) ---
+  { key: 'type', def: 'audio', norm: (v) => (CUE_TYPES.includes(v) ? v : 'audio') },
+  { key: 'number', def: '' },
+  { key: 'name', def: '' },
+  { key: 'preWait', def: 0 }, // seconden wachten vóór de cue z'n actie doet
+  { key: 'autoContinue', def: false }, // na afloop automatisch de volgende cue starten
+  { key: 'autoContinueDelay', def: 1 },
+  { key: 'autoFollow', def: false }, // volgende cue starten zodra deze klaar is
+  { key: 'midiTrigger', def: '' }, // MIDI-input die deze cue start (bv. 'note:0:60')
+  // --- audio ---
+  { key: 'fadeIn', def: 0 },
+  { key: 'fadeOut', def: 3 },
+  { key: 'fadeOutAtEnd', def: false }, // fade-uit ook aan het natuurlijke einde
+  { key: 'volume', def: 1 }, // 0..1
+  { key: 'loop', def: false },
+  { key: 'loopCount', def: '' }, // aantal keer; leeg = oneindig
+  { key: 'loopCrossfade', def: 0 }, // crossfade tussen loop-iteraties (s)
+  { key: 'inPoint', def: 0 }, // startpunt (s)
+  { key: 'outPoint', def: '' }, // eindpunt (s); leeg = einde audio
+  { key: 'eq', def: freshEq, norm: (v) => (Array.isArray(v) && v.length === 6 ? v.map(Number) : freshEq()) },
+  // --- wait ---
+  { key: 'waitTime', def: 3 }, // seconden wachten (wait-cue)
+  // --- stop / fade (doel-cue) ---
+  { key: 'target', def: '' }, // doel-cue-id, of 'all'
+  { key: 'stopFade', def: 0 }, // uitfade-tijd bij stop (0 = hard)
+  { key: 'fadeTo', def: 0 }, // doelvolume 0..1 (fade-cue)
+  { key: 'fadeTime', def: 3 }, // duur van de fade (s)
+  { key: 'stopAfter', def: false }, // doel-cue stoppen na de fade
+  // --- group ---
+  { key: 'mode', def: 'simultaneous' }, // 'simultaneous' | 'sequential'
+  { key: 'children', def: freshChildren, norm: (v) => (Array.isArray(v) ? v.slice() : []) },
+  // --- midi-out ---
+  { key: 'midiOut', def: freshMidiOut },
+  // --- osc-out ---
+  { key: 'oscOut', def: freshOscOut },
+  // --- light / DMX (gereserveerd voor later) ---
+  { key: 'dmx', def: freshDmx },
+];
+
+function defaultFor(f) {
+  return typeof f.def === 'function' ? f.def() : f.def;
+}
+
+// Diepe kopie voor plain data (arrays/objecten), zodat cues nooit een array of
+// object delen. Onze cue-data is puur JSON, dus dit volstaat.
+function cloneValue(v) {
+  if (Array.isArray(v)) return v.map(cloneValue);
+  if (v && typeof v === 'object') return JSON.parse(JSON.stringify(v));
+  return v;
+}
+
+// Bouw een cue met alle velden op hun default, overschreven door `partial`.
+// `file` is runtime-only (niet in CUE_FIELDS) en gaat mee als het meekomt.
+export function baseCue(partial = {}) {
+  const cue = { id: partial.id || uuid() };
+  for (const f of CUE_FIELDS) {
+    cue[f.key] = f.key in partial ? partial[f.key] : defaultFor(f);
+  }
+  if ('file' in partial) cue.file = partial.file;
+  return cue;
+}
+
 export function createCue(file) {
-  return {
-    id: uuid(),
-    number: '', // eigen cue-nummer (leeg = toon lijstpositie)
-    name: file.name.replace(/\.[^.]+$/, ''),
-    file,
-    fadeIn: 0, // seconden
-    fadeOut: 3, // seconden (per-cue default)
-    fadeOutAtEnd: false, // fade-uit ook aan het natuurlijke einde (niet alleen bij Esc)
-    volume: 1, // 0..1
-    loop: false, // herhalen?
-    loopCount: '', // aantal keer afspelen; leeg = oneindig
-    loopCrossfade: 0, // crossfade tussen loop-iteraties in seconden (0 = uit)
-    inPoint: 0, // startpunt in seconden
-    outPoint: '', // eindpunt in seconden; leeg = einde van de audio
-    autoContinue: false, // na afloop automatisch de volgende cue starten
-    autoContinueDelay: 1, // wachttijd (s) voor auto-doorgaan
-    midiTrigger: '', // MIDI-handtekening die deze cue start (bv. 'note:0:60'); leeg = geen
-    eq: [0, 0, 0, 0, 0, 0], // 6-bands equalizer, gain per band in dB (0 = vlak)
-  };
+  return baseCue({ type: 'audio', file, name: file.name.replace(/\.[^.]+$/, '') });
 }
 
 // Cue → platte metadata (voor opslag en voor de gedeelde show op de server).
 // fileName/fileType gaan mee zodat een andere client het bestand kan herbouwen.
 export function cueToMeta(c) {
-  return {
-    id: c.id,
-    number: c.number || '',
-    name: c.name,
-    fadeIn: c.fadeIn,
-    fadeOut: c.fadeOut,
-    fadeOutAtEnd: !!c.fadeOutAtEnd,
-    volume: c.volume,
-    loop: !!c.loop,
-    loopCount: c.loopCount || '',
-    loopCrossfade: c.loopCrossfade || 0,
-    inPoint: c.inPoint || 0,
-    outPoint: c.outPoint || '',
-    autoContinue: !!c.autoContinue,
-    autoContinueDelay: c.autoContinueDelay ?? 1,
-    midiTrigger: c.midiTrigger || '',
-    eq: Array.isArray(c.eq) ? c.eq.slice(0, 6).map(Number) : [0, 0, 0, 0, 0, 0],
-    fileName: c.file?.name || '',
-    fileType: c.file?.type || '',
-  };
+  const m = { id: c.id };
+  for (const f of CUE_FIELDS) {
+    m[f.key] = cloneValue(c[f.key] === undefined ? defaultFor(f) : c[f.key]);
+  }
+  m.fileName = c.file?.name || '';
+  m.fileType = c.file?.type || '';
+  return m;
 }
 
-// Platte metadata + audiobestand → cue. Ontbrekende velden krijgen hun default.
+// Platte metadata (+ audiobestand) → cue. Ontbrekende velden krijgen hun default;
+// `norm` schoont rommelige waarden op. `file` is null voor niet-audio cues.
 export function metaToCue(m, file) {
-  return {
-    id: m.id,
-    number: m.number ?? '',
-    name: m.name ?? (file?.name || '').replace(/\.[^.]+$/, ''),
-    file,
-    fadeIn: m.fadeIn ?? 0,
-    fadeOut: m.fadeOut ?? 3,
-    fadeOutAtEnd: !!m.fadeOutAtEnd,
-    volume: m.volume ?? 1,
-    loop: !!m.loop,
-    loopCount: m.loopCount || '',
-    loopCrossfade: m.loopCrossfade || 0,
-    inPoint: m.inPoint || 0,
-    outPoint: m.outPoint || '',
-    autoContinue: !!m.autoContinue,
-    autoContinueDelay: m.autoContinueDelay ?? 1,
-    midiTrigger: m.midiTrigger || '',
-    eq: Array.isArray(m.eq) && m.eq.length === 6 ? m.eq.map(Number) : [0, 0, 0, 0, 0, 0],
-  };
+  const cue = { id: m.id || uuid(), file };
+  for (const f of CUE_FIELDS) {
+    if (f.key in m && m[f.key] !== undefined) {
+      cue[f.key] = f.norm ? f.norm(m[f.key]) : cloneValue(m[f.key]);
+    } else {
+      cue[f.key] = defaultFor(f);
+    }
+  }
+  if (!cue.name) cue.name = (file?.name || '').replace(/\.[^.]+$/, '');
+  return cue;
 }
 
 export class CueList {
