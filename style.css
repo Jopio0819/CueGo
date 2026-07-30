@@ -198,6 +198,8 @@ body.locked .project-title:hover { background: transparent; }
 /* Type-icoon voor besturings-cues, maar alleen als de rij niets doet — speelt hij,
    dan wint het ▶-teken hierboven (de cue "loopt" dan echt, bv. een aftellende wacht). */
 .cuelist tbody tr.type-wait:not(.playing):not(.paused) td.col-status::before { content: "⏱"; color: var(--muted); }
+.cuelist tbody tr.type-stop:not(.playing):not(.paused) td.col-status::before { content: "⏹"; color: var(--danger); }
+.cuelist tbody tr.type-fade:not(.playing):not(.paused) td.col-status::before { content: "▽"; color: var(--muted); }
 /* De samenvatting van een besturings-cue (over de fade/volume-kolommen heen). */
 .cuelist td.col-typeinfo { color: var(--muted); font-style: italic; font-size: 12px; }
 

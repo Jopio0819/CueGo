@@ -170,9 +170,27 @@ function startInlineNumberEdit(cell, cue) {
 // Korte omschrijving van wat een besturings-cue doet (voor de lijst).
 function cueSummary(cue) {
   switch (cue.type) {
-    case 'wait': return `Wacht ${fmt(Math.max(0, parseFloat(cue.waitTime) || 0))}s`;
+    case 'wait':
+      return `Wacht ${fmt(Math.max(0, parseFloat(cue.waitTime) || 0))}s`;
+    case 'stop': {
+      const fade = Math.max(0, parseFloat(cue.stopFade) || 0);
+      const tgt = cue.target === 'all' ? 'alles' : targetName(cue.target);
+      return `Stop ${tgt}${fade > 0 ? ` (${fmt(fade)}s)` : ''}`;
+    }
+    case 'fade': {
+      const pct = Math.round((parseFloat(cue.fadeTo) || 0) * 100);
+      const t = fmt(Math.max(0, parseFloat(cue.fadeTime) || 0));
+      return `Fade ${targetName(cue.target)} → ${pct}% / ${t}s`;
+    }
     default: return '';
   }
+}
+
+// Leesbare naam van een doel-cue (voor stop/fade-samenvattingen).
+function targetName(id) {
+  if (!id) return '(geen)';
+  const c = cues.getById(id);
+  return c ? ((c.number ? c.number + ' ' : '') + c.name) : '(?)';
 }
 
 function fmt(n) { return Number.isInteger(n) ? String(n) : n.toFixed(1); }
@@ -268,15 +286,46 @@ function syncInspector() {
   const isAudio = type === 'audio';
   const showSection = (nm, on) => { const s = inspector.querySelector(`.ins-section[data-section="${nm}"]`); if (s) s.hidden = !on; };
   showSection('wait', type === 'wait');
+  showSection('stop', type === 'stop');
+  showSection('fade', type === 'fade');
   showSection('region', isAudio);
   showSection('fades', isAudio);
   showSection('audio', isAudio);
   showSection('loop', isAudio);
   $('insDuration').closest('.field').hidden = !isAudio; // "Duur" is audio-only
+
+  // Voor élk type: pre-wait en auto-vervolg.
+  $('insPreWait').value = cue.preWait || '';
+  $('insAutoFollow').checked = !!cue.autoFollow;
+
   if (type === 'wait') $('insWaitTime').value = cue.waitTime ?? 3;
+  if (type === 'stop') {
+    fillTargetSelect($('insStopTarget'), cue, true);
+    $('insStopFade').value = cue.stopFade || '';
+  }
+  if (type === 'fade') {
+    fillTargetSelect($('insFadeTarget'), cue, false);
+    $('insFadeToLevel').value = cue.fadeTo ?? 0;
+    $('insFadeToVal').textContent = `${Math.round((cue.fadeTo ?? 0) * 100)}%`;
+    $('insFadeTime').value = cue.fadeTime ?? 3;
+    $('insFadeStopAfter').checked = !!cue.stopAfter;
+  }
 
   if (isAudio) { showInspectorDuration(cue); syncEqStatus(); syncPreviewBar(); }
   syncCueMidi();
+}
+
+// Vul een doel-dropdown met de andere cues (voor stop/fade). `includeAll` zet
+// "Alles" bovenaan (stop); anders een "(kies een cue)"-placeholder (fade).
+function fillTargetSelect(sel, cue, includeAll) {
+  const opts = [includeAll ? '<option value="all">Alles</option>' : '<option value="">(kies een cue)</option>'];
+  for (const c of cues.cues) {
+    if (c.id === cue.id) continue; // niet zichzelf
+    const label = (c.number ? c.number + ' ' : '') + c.name;
+    opts.push(`<option value="${c.id}">${escapeHtml(label)}</option>`);
+  }
+  sel.innerHTML = opts.join('');
+  sel.value = cue.target || (includeAll ? 'all' : '');
 }
 
 // Toon de audioduur in seconden (decodeert op de achtergrond als 'ie nog onbekend is).
@@ -456,11 +505,65 @@ function bindInspector() {
     syncPreviewBar();
   });
 
+  // Pre-wait & auto-vervolg (elk cue-type).
+  $('insPreWait').addEventListener('input', (e) => {
+    const v = Math.max(0, num(e.target.value, 0));
+    applyToSelected((c) => { c.preWait = v; });
+    render();
+    persist();
+  });
+  $('insAutoFollow').addEventListener('change', (e) => {
+    const on = e.target.checked;
+    applyToSelected((c) => { c.autoFollow = on; });
+    render();
+    persist();
+  });
+
   // Wachttijd (wacht-cue).
   $('insWaitTime').addEventListener('input', (e) => {
     const v = Math.max(0, num(e.target.value, 0));
     applyToSelected((c) => { c.waitTime = v; });
     render();
+    persist();
+  });
+
+  // Stop-cue: doel + uitfade.
+  $('insStopTarget').addEventListener('change', (e) => {
+    const v = e.target.value;
+    applyToSelected((c) => { c.target = v; });
+    render();
+    persist();
+  });
+  $('insStopFade').addEventListener('input', (e) => {
+    const v = Math.max(0, num(e.target.value, 0));
+    applyToSelected((c) => { c.stopFade = v; });
+    render();
+    persist();
+  });
+
+  // Fade-cue: doel + niveau + tijd + stop-erna.
+  $('insFadeTarget').addEventListener('change', (e) => {
+    const v = e.target.value;
+    applyToSelected((c) => { c.target = v; });
+    render();
+    persist();
+  });
+  $('insFadeToLevel').addEventListener('input', (e) => {
+    const v = num(e.target.value, 0);
+    applyToSelected((c) => { c.fadeTo = v; });
+    $('insFadeToVal').textContent = `${Math.round(v * 100)}%`;
+    render();
+    persist();
+  });
+  $('insFadeTime').addEventListener('input', (e) => {
+    const v = Math.max(0, num(e.target.value, 0));
+    applyToSelected((c) => { c.fadeTime = v; });
+    render();
+    persist();
+  });
+  $('insFadeStopAfter').addEventListener('change', (e) => {
+    const on = e.target.checked;
+    applyToSelected((c) => { c.stopAfter = on; });
     persist();
   });
 
@@ -556,20 +659,59 @@ function stopControl(id) {
 }
 function stopAllControl() { for (const id of [...controlRuntime.keys()]) stopControl(id); }
 
-// Voer een besturings-cue uit. Vertakt op type; een type zonder gedrag (nog niet
-// geïmplementeerd) schuift meteen door, zodat er niets blijft hangen.
+// Start een aftel-fase voor een cue en roep `onComplete` aan als 'ie afloopt. De
+// UI toont de cue ondertussen als lopend (rij licht op, voortgangsbalk telt af).
+// Gebruikt voor de wacht-cue, de fade-cue (duurt z'n fade-tijd) én de pre-wait.
+function startControlTimer(cue, seconds, onComplete) {
+  stopControl(cue.id); // nooit dubbel aftellen
+  const secs = Math.max(0, seconds || 0);
+  const timer = setTimeout(() => { controlRuntime.delete(cue.id); onComplete(); }, secs * 1000);
+  controlRuntime.set(cue.id, { startedAt: performance.now(), duration: secs, timer });
+  render();
+  animateProgress();
+}
+
+// Voer een besturings-cue uit (na een eventuele pre-wait). Vertakt op type.
 function runControlCue(cue) {
   emit('cuestart', { id: cue.id, number: cue.number, name: cue.name });
-  if (cue.type === 'wait') {
-    const secs = Math.max(0, parseFloat(cue.waitTime) || 0);
-    stopControl(cue.id); // nooit dubbel aftellen
-    const timer = setTimeout(() => finishControlCue(cue, true), secs * 1000);
-    controlRuntime.set(cue.id, { startedAt: performance.now(), duration: secs, timer });
-    render();
-    animateProgress();
-  } else {
-    finishControlCue(cue, true);
+  switch (cue.type) {
+    case 'wait':
+      startControlTimer(cue, parseFloat(cue.waitTime) || 0, () => finishControlCue(cue, true));
+      break;
+    case 'stop':
+      runStopCue(cue);
+      finishControlCue(cue, true); // stoppen is direct klaar
+      break;
+    case 'fade':
+      runFadeCue(cue);
+      // De fade "loopt" z'n fade-tijd; daarna klaar (en evt. het doel stoppen).
+      startControlTimer(cue, parseFloat(cue.fadeTime) || 0, () => {
+        if (cue.stopAfter && cue.target) engine.stopCue(cue.target);
+        finishControlCue(cue, true);
+      });
+      break;
+    default:
+      finishControlCue(cue, true); // nog geen gedrag → gewoon doorschuiven
   }
+}
+
+// Stop-cue: een lopende cue (of alles) stoppen, hard of met uitfade.
+function runStopCue(cue) {
+  const fade = Math.max(0, parseFloat(cue.stopFade) || 0);
+  if (cue.target === 'all') {
+    if (fade > 0) engine.fadeOutAll(fade); else engine.stopAll();
+    stopAllControl();
+  } else if (cue.target) {
+    if (fade > 0) engine.fadeOutCue(cue.target, fade); else engine.stopCue(cue.target);
+    stopControl(cue.target);
+  }
+}
+
+// Fade-cue: een lopende cue naar een niveau faden (en dóór laten spelen).
+function runFadeCue(cue) {
+  if (!cue.target) return;
+  const level = Math.min(1, Math.max(0, parseFloat(cue.fadeTo) || 0));
+  engine.fadeTo(cue.target, level, Math.max(0, parseFloat(cue.fadeTime) || 0));
 }
 
 // De besturings-cue is klaar. Zelfde afronding als een audio-cue: onCueEnded
@@ -580,6 +722,13 @@ function finishControlCue(cue, natural) {
 }
 
 async function playCue(cue, opts = {}) {
+  // Pre-wait geldt voor élk type: eerst aftellen, dan pas de actie. Eén keer
+  // (de vervolgaanroep zet _afterPreWait, zodat we niet opnieuw wachten).
+  const pre = Math.max(0, parseFloat(cue.preWait) || 0);
+  if (pre > 0 && !opts._afterPreWait) {
+    startControlTimer(cue, pre, () => playCue(cue, { ...opts, _afterPreWait: true }));
+    return;
+  }
   // Niet-audio cues doen hun eigen ding en raken de audio-engine niet aan.
   if ((cue.type || 'audio') !== 'audio') { runControlCue(cue); return; }
   if (settings.singleCueMode) fadeOutOthers(cue.id);
@@ -620,10 +769,15 @@ function go(a) {
   emit('go', { id: cue.id, number: cue.number, name: cue.name });
   // a.fadeIn (van de fade-in-toets): starten met een gekozen fade-in i.p.v. hard.
   playCue(cue, a?.fadeIn != null ? { fadeIn: Math.max(0, a.fadeIn) } : undefined); // herstart als hij al speelt → nooit dubbel
+  const prevIdx = cues.selectedIndex;
   cues.advance();
   selectOnly(cues.selected.id, cues.selectedIndex);
   render();
   syncInspector();
+  // Auto-vervolg: start de volgende cue meteen mee (chain-op-trigger, zoals QLab
+  // auto-continue). Stopt vanzelf onderaan de lijst, want dan verspringt de
+  // selectie niet meer — zo kan het nooit oneindig doorgaan.
+  if (cue.autoFollow && cues.selectedIndex !== prevIdx) go();
 }
 
 const numValidate = (x) => (x !== '' && !Number.isNaN(parseFloat(x)) && parseFloat(x) >= 0 ? true : 'Voer een geldig getal in.');
@@ -1341,8 +1495,9 @@ function addFiles(fileList) {
 // model-bouwer i.p.v. de bestand-route.
 function addCueOfType(type) {
   if (locked) return;
-  const names = { wait: 'Wacht' };
-  const cue = baseCue({ type, name: names[type] || type });
+  const names = { wait: 'Wacht', stop: 'Stop', fade: 'Fade' };
+  const extra = type === 'stop' ? { target: 'all' } : {}; // een stop-cue stopt standaard alles
+  const cue = baseCue({ type, name: names[type] || type, ...extra });
   cues.addExisting(cue);
   const idx = cues.cues.length - 1;
   selectOnly(cue.id, idx);
@@ -1385,6 +1540,8 @@ function bindLoaders() {
   $('pickFolderBtn').addEventListener('click', () => { closeMenus(); pickFolder(); });
   $('pickFilesBtn').addEventListener('click', () => { closeMenus(); $('fileInput').click(); });
   $('addWaitCue').addEventListener('click', () => { closeMenus(); addCueOfType('wait'); });
+  $('addStopCue').addEventListener('click', () => { closeMenus(); addCueOfType('stop'); });
+  $('addFadeCue').addEventListener('click', () => { closeMenus(); addCueOfType('fade'); });
   $('fileInput').addEventListener('change', (e) => { addFiles(e.target.files); e.target.value = ''; });
   // Terugval-map-invoer (zonder secure context). Levert álle bestanden uit de map
   // en submappen; addFiles filtert de audio er zelf uit.

@@ -378,6 +378,29 @@ async setSinkId(deviceId) {
     for (const cueId of [...this.voices.keys()]) this.fadeOutCue(cueId, seconds);
   }
 
+  // Fade een spelende cue naar een niveau (0..1) over `seconds` — en laat 'm dóór-
+  // spelen op dat niveau. Voor de fade-cue. Anders dan _fadeAndStop, die de cue
+  // wegdraait en stopt. Speelt de cue niet (of is 'ie gepauzeerd), dan valt er
+  // niets te faden. Geeft terug of er echt gefade is.
+  fadeTo(cueId, level, seconds) {
+    const v = this.voices.get(cueId);
+    if (!v || v.ended || v.paused || this._voiceSources(v).length === 0) return false;
+    const now = this.ctx.currentTime;
+    const dur = Math.max(0, seconds || 0);
+    const g = v.gain.gain;
+    const target = clamp01(level);
+    // Lineair (niet exponentieel), want een fade-cue mag naar precies 0 kunnen —
+    // en exponentieel bereikt nooit nul.
+    g.cancelScheduledValues(now);
+    g.setValueAtTime(Math.max(0, g.value), now);
+    if (dur <= 0) g.setValueAtTime(target, now);
+    else g.linearRampToValueAtTime(target, now + dur);
+    return true;
+  }
+
+  // Harde stop van één cue (zonder fade, zonder onEnded-callback). Voor de stop-cue.
+  stopCue(cueId) { this._discard(cueId); }
+
   // Harde stop zonder fade (2× Esc).
   stopAll() {
     for (const v of this.voices.values()) this._silence(v);
