@@ -184,7 +184,7 @@ async function run() {
       writeFileSync(join(binnen, f), readFileSync(join(ROOT, f)));
     }
     mkdirSync(join(binnen, 'src'), { recursive: true });
-    for (const f of ['app.js', 'control.js', 'audio-engine.js', 'cue-model.js', 'midi.js', 'net-remote.js', 'project.js', 'projects-store.js', 'show-sync.js', 'storage.js']) {
+    for (const f of ['app.js', 'control.js', 'audio-engine.js', 'cue-model.js', 'midi.js', 'net-remote.js', 'project.js', 'projects-store.js', 'show-sync.js', 'spotify-import.js', 'storage.js']) {
       writeFileSync(join(binnen, 'src', f), readFileSync(join(ROOT, 'src', f)));
     }
     const fd = spawn('node', ['server.mjs'], {

@@ -66,6 +66,7 @@ async function run() {
       CUEGO_ADMIN_PASSWORD: 'x',
       CUEGO_NO_ALIAS: '1',        // niet aan het echte shell-profiel zitten
       CUEGO_NO_UPDATE_CHECK: '1',
+      CUEGO_INSTALL_SPOTDL: '0',  // installatietest blijft netwerkloos
     },
     stdio: ['ignore', 'pipe', 'pipe'],
   });

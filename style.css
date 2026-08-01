@@ -850,6 +850,34 @@ body.dragging .drop-overlay { display: flex; }
 }
 .toast.show { opacity: 1; transform: none; }
 
+/* Niet-blokkerende achtergrondtaak voor Spotify-playlists. */
+.spotify-import-status {
+  position: fixed;
+  left: 18px;
+  bottom: 84px;
+  z-index: 70;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  max-width: min(420px, calc(100vw - 36px));
+  padding: 10px 13px;
+  border-radius: 10px;
+  background: var(--panel);
+  border: 1px solid var(--line-strong);
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.35;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+  pointer-events: none;
+}
+.spotify-import-status[hidden] { display: none; }
+.spotify-import-status .spinner {
+  width: 16px;
+  height: 16px;
+  border-width: 2px;
+  flex: none;
+}
+
 /* Multi-device: verbonden clients + wie het geluid afspeelt */
 .device-list { display: flex; flex-direction: column; gap: 6px; margin: 8px 0 14px; }
 .device-row {

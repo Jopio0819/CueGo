@@ -38,6 +38,7 @@ function get(path) {
 const MOET_WERKEN = [
   '/', '/app.html', '/index.html', '/remote.html', '/404.html',
   '/style.css', '/src/app.js', '/src/control.js', '/src/audio-engine.js',
+  '/src/spotify-import.js',
   '/assets/logo.png',
 ];
 

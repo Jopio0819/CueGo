@@ -11,21 +11,24 @@
 //   GET  /api/events?role=remote→ SSE-stroom met toestand
 //   POST /api/command           → { cmd, args } → naar de app
 //   POST /api/state             → toestand van de app → naar de remotes
+//   POST /api/spotify-import    → start lokale spotDL-playlistjob
+//   GET  /api/spotify-import/:id→ status/bestanden van die tijdelijke job
 //
 // Bij het starten wordt om een admin-wachtwoord gevraagd: dat vergrendelt elk
 // apparaat tot het daar is ingevuld, en remotes moeten het meesturen.
 import { createServer } from 'node:http';
 import { createServer as createHttpsServer } from 'node:https';
-import { readFile, writeFile, readdir, stat, mkdir, unlink } from 'node:fs/promises';
+import { readFile, writeFile, readdir, stat, mkdir, unlink, mkdtemp, rm } from 'node:fs/promises';
 import { dirname, extname, join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { networkInterfaces, homedir } from 'node:os';
+import { networkInterfaces, homedir, tmpdir } from 'node:os';
 import { createSocket } from 'node:dgram';
 import { execFile, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
 import { randomBytes } from 'node:crypto';
 import { parseOsc, oscToCommand, encodeOsc } from './osc.mjs';
 import { generateCert } from './cert.mjs';
+import { normalizeSpotifyPlaylistUrl } from './src/spotify-import.js';
 
 const ROOT = fileURLToPath(new URL('.', import.meta.url));
 const PORT = process.env.PORT ? Number(process.env.PORT) : 4321;
@@ -820,6 +823,163 @@ function readJson(req, limit = 1e6) {
   });
 }
 
+// --- Spotify-playlist voorbereiden (alleen lokaal) -------------------------
+// spotDL wordt bewust als los programma aangeroepen. CueGo blijft zelf volledig
+// dependency-vrij en de resulterende mp3's gaan via de normale audio-import:
+// daarna heeft een show Spotify, YouTube noch internet nodig.
+const spotifyJobs = new Map(); // id → tijdelijke downloadjob
+const SPOTIFY_JOB_MAX_AGE = 30 * 60 * 1000;
+const SPOTIFY_AUDIO_EXTS = new Set(['.mp3', '.m4a', '.aac', '.ogg', '.oga', '.opus', '.wav', '.flac', '.aif', '.aiff']);
+let spotdlCommand = null;
+
+function spotifyDownloadThreads() {
+  const requested = Number(process.env.CUEGO_SPOTDL_THREADS);
+  if (!Number.isInteger(requested) || requested < 1) return 8;
+  return Math.min(requested, 16);
+}
+
+async function resolveSpotdlCommand() {
+  if (spotdlCommand) return spotdlCommand;
+  const configured = process.env.CUEGO_SPOTDL;
+  const local = process.platform === 'win32'
+    ? join(ROOT, '.spotdl-venv', 'Scripts', 'spotdl.exe')
+    : join(ROOT, '.spotdl-venv', 'bin', 'spotdl');
+  const candidates = configured
+    ? [{ command: configured, prefix: [] }]
+    : [
+        { command: local, prefix: [] },
+        { command: 'spotdl', prefix: [] },
+        { command: 'python3', prefix: ['-m', 'spotdl'] },
+        { command: 'python', prefix: ['-m', 'spotdl'] },
+      ];
+  for (const candidate of candidates) {
+    try {
+      await execFileAsync(candidate.command, [...candidate.prefix, '--version'], { timeout: 10000, windowsHide: true });
+      spotdlCommand = candidate;
+      return candidate;
+    } catch { /* volgende kandidaat */ }
+  }
+  return null;
+}
+
+function spotifyJobPublic(job) {
+  return {
+    id: job.id,
+    status: job.status,
+    message: job.message || '',
+    error: job.error || '',
+    warning: job.warning || '',
+    files: job.files || [],
+  };
+}
+
+function updateSpotifyJobLog(job, chunk) {
+  const clean = String(chunk || '')
+    .replace(/\x1b\[[0-?]*[ -\/]*[@-~]/g, '')
+    .replace(/\r/g, '\n');
+  const last = clean.split('\n').map((s) => s.trim()).filter(Boolean).at(-1);
+  if (last) job.message = last.slice(0, 300);
+}
+
+async function listSpotifyJobFiles(dir) {
+  const entries = await readdir(dir, { withFileTypes: true });
+  const files = [];
+  for (const entry of entries) {
+    if (!entry.isFile() || !SPOTIFY_AUDIO_EXTS.has(extname(entry.name).toLowerCase())) continue;
+    const info = await stat(join(dir, entry.name));
+    files.push({ name: entry.name, size: info.size });
+  }
+  files.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }));
+  return files;
+}
+
+async function startSpotifyJob(playlistUrl) {
+  const command = await resolveSpotdlCommand();
+  if (!command) {
+    const setupCommand = `node "${join(ROOT, 'setup.mjs')}" --spotdl-only`;
+    const err = new Error(`spotDL is niet geïnstalleerd. Draai ${setupCommand} en kies Ja wanneer CueGo vraagt om spotDL toe te voegen.`);
+    err.code = 'SPOTDL_MISSING';
+    throw err;
+  }
+  if ([...spotifyJobs.values()].some((j) => j.status === 'running')) {
+    const err = new Error('Er wordt al een Spotify-playlist voorbereid. Wacht tot die import klaar is.');
+    err.code = 'SPOTDL_BUSY';
+    throw err;
+  }
+
+  const dir = await mkdtemp(join(tmpdir(), 'cuego-spotify-'));
+  const id = randomBytes(16).toString('hex');
+  const job = {
+    id, dir, createdAt: Date.now(), status: 'running', files: [],
+    message: 'Playlistinformatie ophalen…', error: '', warning: '', child: null,
+  };
+  spotifyJobs.set(id, job);
+
+  // Het playlistnummer vooraan bewaart de Spotify-volgorde wanneer CueGo de
+  // bestanden toevoegt. Een argumenten-array (geen shell) voorkomt injectie.
+  const output = join(dir, '{list-position}. {artists} - {title}.{output-ext}');
+  const threads = spotifyDownloadThreads();
+  const args = [
+    ...command.prefix, 'download', playlistUrl,
+    '--format', 'mp3', '--output', output, '--restrict', 'strict',
+    '--threads', String(threads), '--simple-tui', '--print-errors',
+  ];
+  const child = spawn(command.command, args, {
+    cwd: dir,
+    stdio: ['ignore', 'pipe', 'pipe'],
+    windowsHide: true,
+    env: { ...process.env, NO_COLOR: '1', PYTHONUNBUFFERED: '1' },
+  });
+  job.child = child;
+  child.stdout.on('data', (chunk) => updateSpotifyJobLog(job, chunk));
+  child.stderr.on('data', (chunk) => updateSpotifyJobLog(job, chunk));
+  child.on('error', (err) => {
+    job.status = 'error';
+    job.error = `spotDL kon niet starten: ${err.message}`;
+    job.child = null;
+  });
+  child.on('close', async (code) => {
+    job.child = null;
+    if (job.status === 'cancelled' || job.status === 'error') return;
+    try {
+      job.files = await listSpotifyJobFiles(dir);
+      if (!job.files.length) throw new Error(job.message || 'spotDL heeft geen audiobestanden opgeleverd.');
+      job.status = 'done';
+      job.message = `${job.files.length} ${job.files.length === 1 ? 'nummer' : 'nummers'} klaar om toe te voegen`;
+      if (code) job.warning = `spotDL stopte met code ${code}; beschikbare nummers worden wel geïmporteerd.`;
+    } catch (err) {
+      job.status = 'error';
+      job.error = err.message;
+    }
+  });
+  return job;
+}
+
+async function removeSpotifyJob(job) {
+  if (!job) return;
+  if (job.child) {
+    job.status = 'cancelled';
+    const child = job.child;
+    try { child.kill('SIGTERM'); } catch { /* al gestopt */ }
+    // Vooral op Windows kan de tijdelijke map pas weg wanneer spotDL z'n cwd
+    // heeft losgelaten. Wacht kort op close; laat opruimen nooit lang blokkeren.
+    await Promise.race([
+      new Promise((resolve) => child.once('close', resolve)),
+      new Promise((resolve) => setTimeout(resolve, 2000)),
+    ]);
+  }
+  spotifyJobs.delete(job.id);
+  await rm(job.dir, { recursive: true, force: true }).catch(() => {});
+}
+
+// Vergeten/afgebroken browserimports mogen /tmp niet blijven vullen.
+setInterval(() => {
+  const now = Date.now();
+  for (const job of spotifyJobs.values()) {
+    if (now - job.createdAt > SPOTIFY_JOB_MAX_AGE) removeSpotifyJob(job);
+  }
+}, 5 * 60 * 1000).unref();
+
 // IPv4-adressen op het LAN, zodat de app kan tonen waar de remote te vinden is.
 function lanIps() {
   const out = [];
@@ -1007,6 +1167,56 @@ const handleRequest = async (req, res) => {
       }
       broadcastDevices();
       json(res, 200, { ok: true, showDeviceId: primaryDeviceId, devices: deviceList() });
+      return;
+    }
+
+    // Spotify-playlist → lokale audiobestanden. De browser start een job, pollt
+    // de status en haalt daarna elk bestand op via /files/<index>. Pas na de
+    // gewone CueGo-import wordt de tijdelijke map verwijderd.
+    if (urlPath === '/api/spotify-import') {
+      if (req.method !== 'POST') { json(res, 405, { error: 'Gebruik POST' }); return; }
+      if (!canEdit(req)) { json(res, 403, { error: 'Vergrendeld — geen playlists toevoegen' }); return; }
+      const body = await readJson(req).catch(() => null);
+      const playlistUrl = normalizeSpotifyPlaylistUrl(body?.url);
+      if (!playlistUrl) { json(res, 400, { error: 'Plak een geldige Spotify-playlistlink.' }); return; }
+      try {
+        const job = await startSpotifyJob(playlistUrl);
+        json(res, 202, spotifyJobPublic(job));
+      } catch (err) {
+        json(res, err.code === 'SPOTDL_BUSY' ? 409 : err.code === 'SPOTDL_MISSING' ? 503 : 500, { error: err.message });
+      }
+      return;
+    }
+
+    const spotifyRoute = /^\/api\/spotify-import\/([a-f0-9]{32})(?:\/files\/(\d+))?$/.exec(urlPath);
+    if (spotifyRoute) {
+      if (!canEdit(req)) { json(res, 403, { error: 'Vergrendeld — geen toegang tot deze import' }); return; }
+      const job = spotifyJobs.get(spotifyRoute[1]);
+      if (!job) { json(res, 404, { error: 'Import niet (meer) gevonden.' }); return; }
+
+      if (req.method === 'DELETE' && spotifyRoute[2] == null) {
+        await removeSpotifyJob(job);
+        json(res, 200, { ok: true });
+        return;
+      }
+      if (req.method !== 'GET') { json(res, 405, { error: 'Gebruik GET of DELETE' }); return; }
+
+      if (spotifyRoute[2] == null) {
+        json(res, 200, spotifyJobPublic(job));
+        return;
+      }
+      if (job.status !== 'done') { json(res, 409, { error: 'De playlist is nog niet klaar.' }); return; }
+      const index = Number(spotifyRoute[2]);
+      const item = Number.isInteger(index) ? job.files[index] : null;
+      if (!item) { json(res, 404, { error: 'Audiobestand niet gevonden.' }); return; }
+      const buf = await readFile(join(job.dir, item.name)).catch(() => null);
+      if (!buf) { json(res, 404, { error: 'Audiobestand niet gevonden.' }); return; }
+      const type = {
+        '.mp3': 'audio/mpeg', '.m4a': 'audio/mp4', '.aac': 'audio/aac',
+        '.ogg': 'audio/ogg', '.oga': 'audio/ogg', '.opus': 'audio/opus',
+        '.wav': 'audio/wav', '.flac': 'audio/flac', '.aif': 'audio/aiff', '.aiff': 'audio/aiff',
+      }[extname(item.name).toLowerCase()] || 'application/octet-stream';
+      res.writeHead(200, { 'Content-Type': type, 'Content-Length': buf.length, 'Cache-Control': 'no-store' }).end(buf);
       return;
     }
 

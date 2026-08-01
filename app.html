@@ -14,6 +14,10 @@
       <i class="dot"></i>
       <span>Offline — geen verbinding met de server. De show speelt lokaal door; opnieuw verbinden…</span>
     </div>
+    <div id="spotifyImportStatus" class="spotify-import-status" role="status" aria-live="polite" hidden>
+      <div class="spinner"></div>
+      <span id="spotifyImportStatusText">Spotify-playlist downloaden…</span>
+    </div>
     <header class="topbar">
       <div class="logo">
         <img src="assets/logo.png" alt="CueGo" />
@@ -30,6 +34,7 @@
         <div class="menu-panel">
           <button id="pickFolderBtn" title="Kies een map met audio (Chrome/Edge)">Map kiezen…</button>
           <button id="pickFilesBtn" title="Kies losse bestanden">Bestanden…</button>
+          <button id="addSpotifyPlaylistBtn" title="Download een Spotify-playlist vooraf als lokale audiocues">Spotify-playlist…</button>
           <div class="menu-sep"></div>
           <button id="addWaitCue" title="Een cue die een tijd wacht en dan doorgaat">Wacht-cue</button>
           <button id="addStopCue" title="Stopt een andere cue (of alles)">Stop-cue</button>

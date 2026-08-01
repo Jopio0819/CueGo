@@ -22,6 +22,9 @@ still starts.
 Running locally takes you **straight into the player** — the landing page is only for the public
 static site.
 
+The first-time installer also checks whether spotDL is available and asks before installing it for
+offline Spotify-playlist preparation. It is installed in an isolated environment inside CueGo.
+
 On boot the server checks whether the repo is behind GitHub and **asks** before updating
 (`j`/enter to skip). It never blocks a start: no network, no git or a slow GitHub means it just
 starts with what it has. Skip the check entirely with `CUEGO_NO_UPDATE_CHECK=1`. If you have local
@@ -45,7 +48,19 @@ Via **Add** (top-right of the player):
 
 - **Choose folder…** — pick one folder; every audio file in it (and its subfolders) becomes a cue. Chrome/Edge.
 - **Files…** — pick individual files.
+- **Spotify playlist…** — when CueGo runs locally, prepare a public Spotify playlist as ordinary local audio cues through [spotDL](https://github.com/spotDL/spotify-downloader). Once imported, playback is fully offline.
 - **Drag & drop** — drop files or folders onto the window.
+
+The Spotify option is intentionally a preparation step, not a live Spotify connection. During the normal CueGo installation, setup checks for spotDL and asks whether it may install it in an isolated environment inside the CueGo folder. To add it later, run:
+
+```bash
+node ~/cuego/setup.mjs --spotdl-only
+```
+
+For unattended setup, use `CUEGO_INSTALL_SPOTDL=1 node ~/cuego/setup.mjs --spotdl-only`; use `0` to skip the question during normal setup. If you already have the executable in a non-standard location, start CueGo with `CUEGO_SPOTDL=/absolute/path/to/spotdl cuego`.
+CueGo downloads up to eight playlist tracks in parallel. Override that between 1 and 16 with, for example, `CUEGO_SPOTDL_THREADS=12 cuego`.
+The download runs in the background: CueGo remains usable and adds the completed playlist automatically without changing the cue you are operating.
+spotDL finds matching audio on YouTube; only download and use music for which you have the necessary rights.
 
 On import the list is **sorted by the number in the title** (e.g. `01 - Intro`, `02 - Scene`, `10 - Finale`).
 New files are appended at the bottom; existing order is kept. You can reorder afterwards by dragging —

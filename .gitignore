@@ -16,3 +16,6 @@ show/
 
 # Zelfgemaakt https-certificaat (per installatie)
 cert/
+
+# Optionele, geïsoleerde spotDL-installatie die setup.mjs aanmaakt
+.spotdl-venv/

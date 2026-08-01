@@ -8,6 +8,7 @@ import { createControl, publicApi, detectServer } from './control.js';
 import { connectAppLink, deviceId, defaultDeviceLabel } from './net-remote.js';
 import { createMidi, describeSignature, MIDI_SUPPORTED, midiMessageBytes } from './midi.js';
 import { createProjectStore } from './projects-store.js';
+import { normalizeSpotifyPlaylistUrl } from './spotify-import.js';
 
 const engine = new AudioEngine();
 const cues = new CueList();
@@ -1654,7 +1655,7 @@ function bindEq() {
 
 // --- Bestanden inladen -----------------------------------------------------
 
-function addFiles(fileList) {
+function addFiles(fileList, { selectNew = true } = {}) {
   if (locked) return 0;
   const startLen = cues.cues.length; // nieuwe cues komen hierna
   let added = 0;
@@ -1677,12 +1678,103 @@ function addFiles(fileList) {
     // Alleen de zojuist toegevoegde bestanden sorteren en onderaan laten staan;
     // de bestaande volgorde blijft ongemoeid.
     cues.sortTailByTitleNumber(startLen);
-    selectOnly(cues.cues[startLen].id, startLen); // selecteer het (eerste) nieuwe bestand
+    // Een achtergrondimport mag de cue die de gebruiker bedient niet ineens
+    // deselecteren. Bij een lege show selecteren we wel de eerste nieuwe cue.
+    if (selectNew || !cues.selected) selectOnly(cues.cues[startLen].id, startLen);
     render();
     syncInspector();
     persist();
   }
   return added;
+}
+
+let spotifyImportBusy = false;
+
+function setSpotifyImportProgress(message, visible = true) {
+  const loading = $('spotifyImportStatus');
+  const text = $('spotifyImportStatusText');
+  if (text) text.textContent = message;
+  if (loading) loading.hidden = !visible;
+}
+
+async function spotifyApiJson(url, options) {
+  const res = await fetch(url, options);
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || `Spotify-import mislukt (HTTP ${res.status}).`);
+  return data;
+}
+
+// spotDL draait uitsluitend op de lokale CueGo-server. Zodra ieder resultaat via
+// addFiles is gegaan, is het een normale audio-cue in IndexedDB/de gedeelde show
+// en is er tijdens de voorstelling geen internetverbinding meer nodig.
+async function importSpotifyPlaylist() {
+  if (locked || spotifyImportBusy) {
+    if (spotifyImportBusy) showToast('Er wordt al een Spotify-playlist voorbereid.');
+    return;
+  }
+  if (!serverInfo) {
+    await customConfirm(
+      'Spotify-playlists voorbereiden kan alleen wanneer CueGo lokaal draait. Start CueGo met het cuego-commando en probeer het daar opnieuw.',
+      { title: 'Lokale server nodig', okLabel: 'OK' }
+    );
+    return;
+  }
+
+  const raw = await customPrompt({
+    title: 'Spotify-playlist toevoegen',
+    message: 'Plak de link van een openbare Spotify-playlist. CueGo bereidt de nummers nu voor als lokale audiocues, zodat de show later volledig offline werkt. Gebruik alleen muziek waarvoor je de benodigde rechten hebt.',
+    okLabel: 'Voorbereiden', inputType: 'url',
+    validate: (value) => normalizeSpotifyPlaylistUrl(value) ? true : 'Plak een geldige Spotify-playlistlink.',
+  });
+  if (raw == null) return;
+
+  const playlistUrl = normalizeSpotifyPlaylistUrl(raw);
+  let jobId = '';
+  spotifyImportBusy = true;
+  try {
+    setSpotifyImportProgress('Spotify-playlist ophalen…');
+    let job = await spotifyApiJson('api/spotify-import', {
+      method: 'POST',
+      headers: editHeaders({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify({ url: playlistUrl, deviceId: deviceId() }),
+    });
+    jobId = job.id;
+    showToast('Spotify-playlist downloadt op de achtergrond — je kunt CueGo blijven gebruiken.');
+
+    while (job.status === 'running') {
+      setSpotifyImportProgress(job.message || 'Spotify-playlist downloaden…');
+      await new Promise((resolve) => setTimeout(resolve, 900));
+      job = await spotifyApiJson(`api/spotify-import/${jobId}`, { headers: editHeaders() });
+    }
+    if (job.status !== 'done') throw new Error(job.error || 'Spotify-playlist voorbereiden is mislukt.');
+
+    const downloaded = [];
+    for (let i = 0; i < job.files.length; i++) {
+      const info = job.files[i];
+      setSpotifyImportProgress(`Audiocues toevoegen… (${i + 1}/${job.files.length})`);
+      const res = await fetch(`api/spotify-import/${jobId}/files/${i}`, { headers: editHeaders() });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || `Kon "${info.name}" niet ophalen.`);
+      }
+      const blob = await res.blob();
+      downloaded.push(new File([blob], info.name, { type: blob.type || 'audio/mpeg' }));
+    }
+    // Eén render/persist voor de hele playlist en de actieve cue geselecteerd
+    // laten: zo onderbreekt afronden de bediening tijdens een show niet.
+    const imported = addFiles(downloaded, { selectNew: false });
+    if (!imported) throw new Error('De playlist bevatte geen bruikbare audiobestanden.');
+    showToast(`${imported} ${imported === 1 ? 'audiocue' : 'audiocues'} toegevoegd — klaar voor offline gebruik.`);
+  } catch (err) {
+    console.error('Spotify-import mislukt:', err);
+    showToast(`Spotify-import mislukt: ${err.message}`);
+  } finally {
+    if (jobId) {
+      fetch(`api/spotify-import/${jobId}`, { method: 'DELETE', headers: editHeaders() }).catch(() => {});
+    }
+    spotifyImportBusy = false;
+    setSpotifyImportProgress('', false);
+  }
 }
 
 // Voeg een besturings-cue toe (geen bestand). Parallel aan addFiles, maar via de
@@ -1746,6 +1838,7 @@ async function collectFiles(dirHandle, out) {
 function bindLoaders() {
   $('pickFolderBtn').addEventListener('click', () => { closeMenus(); pickFolder(); });
   $('pickFilesBtn').addEventListener('click', () => { closeMenus(); $('fileInput').click(); });
+  $('addSpotifyPlaylistBtn').addEventListener('click', () => { closeMenus(); void importSpotifyPlaylist(); });
   $('addWaitCue').addEventListener('click', () => { closeMenus(); addCueOfType('wait'); });
   $('addStopCue').addEventListener('click', () => { closeMenus(); addCueOfType('stop'); });
   $('addFadeCue').addEventListener('click', () => { closeMenus(); addCueOfType('fade'); });
@@ -1930,7 +2023,7 @@ let locked = false;
 const LOCK_EDIT_IDS = [
   'insNumber', 'insName', 'insFadeOutEnd', 'insVolume',
   'insLoopCount', 'insLoopCrossfade', 'insInPoint', 'insOutPoint', 'insAutoContinue', 'insAutoDelay',
-  'pickFolderBtn', 'pickFilesBtn',
+  'pickFolderBtn', 'pickFilesBtn', 'addSpotifyPlaylistBtn',
   'setFadeIn', 'setFadeOut', 'setSingleCue', 'setBlockKeys', 'setSaveKeybinds', 'openKeysBtn', 'openProjectBtn', 'newProjectBtn',
   'setMidi', 'eqBtn',
 ];
