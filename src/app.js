@@ -153,6 +153,7 @@ function render() {
   // zolang we verbonden zijn — bij serververlies spelen we zelf lokaal door en is
   // onze eigen engine juist wél de bron van waarheid.
   if (isFollower() && linkConnected) applyRemotePlayback();
+  if (cartOpen) renderCart(); // cart weerspiegelt dezelfde toestand
   emit('statechange');
 }
 
@@ -193,6 +194,61 @@ function hiddenByCollapse(cue) {
   return false;
 }
 
+// --- Cart / soundboard -----------------------------------------------------
+// Een knoppenraster om losse cues direct te triggeren, los van de lijstvolgorde.
+// Een cue zit in de cart als z'n cartSlot >= 0. Vuren gaat via de bus, zodat het
+// ook op een niet-showcomputer/remote werkt.
+let cartOpen = false;
+const CART_COLS = 4;
+
+function toggleCart() { cartOpen ? closeCart() : openCart(); }
+function openCart() { cartOpen = true; $('cartView').hidden = false; $('cartBtn').classList.add('active'); renderCart(); }
+function closeCart() { cartOpen = false; $('cartView').hidden = true; $('cartBtn').classList.remove('active'); }
+
+// Toets 1-9 → plek 0-8, 0 → plek 9. Alleen die tien krijgen een zichtbare toets.
+function cartKeyLabel(slot) { return slot < 9 ? String(slot + 1) : (slot === 9 ? '0' : ''); }
+function cartFire(slot) {
+  const cue = cues.cues.find((c) => c.cartSlot === slot);
+  if (cue) control.dispatch('play', { cue: cue.id });
+}
+
+function renderCart() {
+  if (!cartOpen) return;
+  const grid = $('cartGrid');
+  grid.innerHTML = '';
+  const inCart = cues.cues.filter((c) => (c.cartSlot ?? -1) >= 0);
+  const maxSlot = inCart.reduce((m, c) => Math.max(m, c.cartSlot), -1);
+  const rows = Math.max(4, Math.ceil((maxSlot + 2) / CART_COLS)); // altijd een lege rij extra
+  const total = rows * CART_COLS;
+  const bySlot = new Map(inCart.map((c) => [c.cartSlot, c]));
+  const available = cues.cues.filter((c) => (c.cartSlot ?? -1) < 0);
+
+  for (let i = 0; i < total; i++) {
+    const cell = document.createElement('div');
+    cell.className = 'cart-cell';
+    const key = cartKeyLabel(i);
+    const cue = bySlot.get(i);
+    if (cue) {
+      cell.classList.add('filled', 'type-' + (cue.type || 'audio'));
+      if (engine.isPlaying(cue.id) || controlActive(cue.id)) cell.classList.add('playing');
+      cell.innerHTML = `${key ? `<span class="cart-key">${key}</span>` : ''}${locked ? '' : '<span class="cart-remove" title="Uit de cart halen">×</span>'}<span class="cart-name">${escapeHtml(cue.name)}</span>`;
+      cell.addEventListener('click', (e) => { if (!e.target.closest('.cart-remove')) control.dispatch('play', { cue: cue.id }); });
+      cell.querySelector('.cart-remove')?.addEventListener('click', (e) => { e.stopPropagation(); cue.cartSlot = -1; renderCart(); persist(); });
+    } else {
+      cell.classList.add('empty');
+      if (key) { const k = document.createElement('span'); k.className = 'cart-key'; k.textContent = key; cell.appendChild(k); }
+      const sel = document.createElement('select');
+      sel.disabled = locked;
+      sel.innerHTML = `<option value="">+ cue</option>` + available.map((c) => `<option value="${c.id}">${escapeHtml((c.number ? c.number + ' ' : '') + c.name)}</option>`).join('');
+      // Na het kiezen de focus loslaten, anders blijft de select 'typen' en werken
+      // de cijfer-hotkeys van de cart niet.
+      sel.addEventListener('change', () => { const c = cues.getById(sel.value); sel.blur(); if (c) { c.cartSlot = i; renderCart(); persist(); } });
+      cell.appendChild(sel);
+    }
+    grid.appendChild(cell);
+  }
+}
+
 // Korte omschrijving van wat een besturings-cue doet (voor de lijst).
 function cueSummary(cue) {
   switch (cue.type) {
@@ -220,6 +276,13 @@ function cueSummary(cue) {
     }
     case 'osc':
       return `OSC ${(cue.oscOut?.address) || '(geen adres)'}`;
+    case 'light': {
+      const d = cue.dmx || {};
+      const n = Array.isArray(d.channels) ? d.channels.length : 0;
+      const proto = d.protocol === 'sacn' ? 'sACN' : 'Art-Net';
+      const fade = Math.max(0, parseFloat(d.fadeTime) || 0);
+      return `DMX ${proto} u${d.universe ?? 1} · ${n} ${n === 1 ? 'kanaal' : 'kanalen'}${fade > 0 ? ` / ${fmt(fade)}s` : ''}`;
+    }
     default: return '';
   }
 }
@@ -329,6 +392,7 @@ function syncInspector() {
   showSection('group', type === 'group');
   showSection('midiout', type === 'midi');
   showSection('oscout', type === 'osc');
+  showSection('light', type === 'light');
   showSection('region', isAudio);
   showSection('fades', isAudio);
   showSection('audio', isAudio);
@@ -364,6 +428,16 @@ function syncInspector() {
     $('insOscAddress').value = o.address || '';
     $('insOscArgs').value = o.args || '';
     $('insOscNote').hidden = !!serverInfo; // geen server → melden dat OSC niet werkt
+  }
+  if (type === 'light') {
+    const d = cue.dmx || {};
+    $('insDmxProtocol').value = d.protocol === 'sacn' ? 'sacn' : 'artnet';
+    $('insDmxUniverse').value = d.universe ?? 1;
+    $('insDmxHost').value = d.host || '';
+    $('insDmxFade').value = d.fadeTime || '';
+    $('insDmxChannels').value = formatDmxChannelsText(d.channels);
+    $('insDmxHostField').hidden = d.protocol === 'sacn'; // sACN gebruikt multicast, geen host
+    $('insDmxNote').hidden = !!serverInfo;
   }
 
   if (isAudio) { showInspectorDuration(cue); syncEqStatus(); syncPreviewBar(); }
@@ -673,6 +747,14 @@ function bindInspector() {
   $('insOscAddress').addEventListener('input', (e) => { setOsc({ address: e.target.value.trim() }); render(); persist(); });
   $('insOscArgs').addEventListener('input', (e) => { setOsc({ args: e.target.value }); render(); persist(); });
 
+  // DMX/Light-cue.
+  const setDmx = (patch) => applyToSelected((c) => { if (c.type === 'light') c.dmx = { ...(c.dmx || {}), ...patch }; });
+  $('insDmxProtocol').addEventListener('change', (e) => { setDmx({ protocol: e.target.value === 'sacn' ? 'sacn' : 'artnet' }); render(); persist(); syncInspector(); });
+  $('insDmxUniverse').addEventListener('input', (e) => { setDmx({ universe: clampInt(e.target.value, 0, 32767) }); render(); persist(); });
+  $('insDmxHost').addEventListener('input', (e) => { setDmx({ host: e.target.value.trim() }); persist(); });
+  $('insDmxFade').addEventListener('input', (e) => { setDmx({ fadeTime: Math.max(0, num(e.target.value, 0)) }); persist(); });
+  $('insDmxChannels').addEventListener('input', (e) => { setDmx({ channels: parseDmxChannelsText(e.target.value) }); render(); persist(); });
+
   // Auto-doorgaan (op alle geselecteerde cues).
   $('insAutoContinue').addEventListener('change', (e) => {
     const on = e.target.checked;
@@ -776,6 +858,8 @@ const controlRuntime = new Map(); // cueId → { startedAt, duration, timer }
 // Sequentiële groepen die nog "lopen" (kind na kind afspelen). Ze hebben geen
 // vaste duur, dus geen timer — ze staan actief tot hun laatste kind klaar is.
 const sequentialGroups = new Set();
+// De laatst gestarte cue — de transportbalk volgt deze (zie transportCue).
+let lastFiredCueId = null;
 
 function controlActive(id) { return controlRuntime.has(id) || sequentialGroups.has(id); }
 function controlElapsed(id) {
@@ -837,6 +921,10 @@ function runControlCue(cue) {
       runOscCue(cue);
       finishControlCue(cue, true);
       break;
+    case 'light':
+      runDmxCue(cue);
+      finishControlCue(cue, true); // versturen start meteen; de fade loopt op de server
+      break;
     default:
       finishControlCue(cue, true); // nog geen gedrag → gewoon doorschuiven
   }
@@ -863,6 +951,24 @@ function runOscCue(cue) {
   }).catch((err) => console.warn('OSC-cue versturen mislukt:', err.message));
 }
 
+// DMX/Light-cue: laat de server Art-Net of sACN versturen (browser kan geen UDP).
+// Alleen zinvol als CueGo lokaal draait.
+function runDmxCue(cue) {
+  const d = cue.dmx || {};
+  if (!Array.isArray(d.channels) || !d.channels.length) return;
+  if (!serverInfo) { console.warn('DMX-cue: alleen beschikbaar als CueGo lokaal draait (server nodig voor UDP).'); return; }
+  fetch('api/dmx-send', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      protocol: d.protocol === 'sacn' ? 'sacn' : 'artnet',
+      host: d.host || '', universe: Number(d.universe) || 0,
+      channels: d.channels, fadeTime: Math.max(0, parseFloat(d.fadeTime) || 0),
+      deviceId: deviceId(),
+    }),
+  }).catch((err) => console.warn('DMX-cue versturen mislukt:', err.message));
+}
+
 // "1 2.5 hoi" → [1, 2.5, "hoi"] met types (heel → int, komma → float, rest tekst).
 function parseOscArgsText(str) {
   const s = String(str || '').trim();
@@ -872,6 +978,21 @@ function parseOscArgsText(str) {
     if (/^-?\d*\.\d+$/.test(t)) return parseFloat(t);
     return t;
   });
+}
+
+// "1:255, 5:128" ↔ [{ch,value}]. (Zelfde vorm als parseDmxChannels in dmx.mjs; hier
+// apart omdat dmx.mjs Buffer gebruikt en niet in de browser kan draaien.)
+function parseDmxChannelsText(str) {
+  const out = [];
+  for (const tok of String(str || '').split(/[,\n]+/)) {
+    const m = /^\s*(\d{1,3})\s*[:=]\s*(\d{1,3})\s*$/.exec(tok);
+    if (!m) continue;
+    out.push({ ch: Math.max(1, Math.min(512, parseInt(m[1], 10))), value: Math.max(0, Math.min(255, parseInt(m[2], 10))) });
+  }
+  return out;
+}
+function formatDmxChannelsText(channels) {
+  return (Array.isArray(channels) ? channels : []).map((c) => `${c.ch}:${c.value}`).join(', ');
 }
 
 // Groep-cue: vuurt z'n directe kinderen af. Tegelijk (simultaneous) of na elkaar
@@ -917,6 +1038,10 @@ function finishControlCue(cue, natural) {
 }
 
 async function playCue(cue, opts = {}) {
+  // Onthoud welke cue het laatst gestart is: de transportbalk volgt die. Belangrijk
+  // voor de cart (losse, overlappende geluiden) — dan loopt de balk mee met wat je
+  // net indrukte, niet met een willekeurige andere spelende cue.
+  lastFiredCueId = cue.id;
   // Pre-wait geldt voor élk type: eerst aftellen, dan pas de actie. Eén keer
   // (de vervolgaanroep zet _afterPreWait, zodat we niet opnieuw wachten).
   const pre = Math.max(0, parseFloat(cue.preWait) || 0);
@@ -1168,6 +1293,12 @@ function animateProgress() {
 // dan bleef het play/pauze-icoon op 'play' staan terwijl er iets speelt — en
 // pauzeerde de knop niet wat je hoort. Meekijkers volgen ook wat er klinkt.
 function transportCue() {
+  // Speelt de laatst gestarte cue nog (of loopt 'ie als besturings-cue)? Toon die —
+  // zo volgt de balk wat je net triggerde, ook bij losse cart-geluiden.
+  if (lastFiredCueId) {
+    const c = cues.getById(lastFiredCueId);
+    if (c && (engine.isPlaying(c.id) || engine.isPaused(c.id) || controlActive(c.id))) return c;
+  }
   let gepauzeerd = null;
   for (const id of engine.voices.keys()) {
     const c = cues.getById(id);
@@ -1175,8 +1306,16 @@ function transportCue() {
     if (engine.isPlaying(id)) return c;
     if (!gepauzeerd && engine.isPaused(id)) gepauzeerd = c;
   }
-  return gepauzeerd || cues.selected;
+  if (gepauzeerd) return gepauzeerd;
+  // Ook een lopende besturings-cue (wacht/fade) mag de balk vullen.
+  for (const c of cues.cues) if (controlActive(c.id)) return c;
+  return cues.selected;
 }
+
+// Lengte en positie voor de transportbalk — voor besturings-cues uit de control-
+// runtime, anders uit de audio-engine.
+function transportLength(cue) { return controlActive(cue.id) ? controlDuration(cue.id) : engine.playLength(cue); }
+function transportPos(cue) { return controlActive(cue.id) ? controlElapsed(cue.id) : engine.position(cue.id); }
 
 let seeking = false;
 function fmtTime(sec) {
@@ -1210,20 +1349,21 @@ function syncTransport() {
     return;
   }
   tpName.textContent = cue.name;
-  const known = engine.playLength(cue);
+  const known = transportLength(cue);
   if (known) tpDuration.textContent = fmtTime(known);
-  else engine.prepare(cue).then(() => { if (transportCue() === cue) tpDuration.textContent = fmtTime(engine.playLength(cue)); }).catch(() => {});
+  else if ((cue.type || 'audio') === 'audio') engine.prepare(cue).then(() => { if (transportCue() === cue) tpDuration.textContent = fmtTime(engine.playLength(cue)); }).catch(() => {});
+  else tpDuration.textContent = '0:00';
   syncTransportProgress();
 }
 
 function syncTransportProgress() {
   const cue = transportCue();
   if (!cue) { setPlayIcon(false); return; }
-  const dur = engine.playLength(cue) || 0;
-  const pos = engine.position(cue.id);
+  const dur = transportLength(cue) || 0;
+  const pos = transportPos(cue);
   tpCurrent.textContent = fmtTime(pos);
   if (!seeking) { seekEl.value = dur ? Math.round((pos / dur) * 1000) : 0; updateSeekFill(); }
-  setPlayIcon(engine.isPlaying(cue.id));
+  setPlayIcon(engine.isPlaying(cue.id) || controlActive(cue.id));
 }
 
 async function transportToggle() {
@@ -1781,7 +1921,7 @@ async function importSpotifyPlaylist() {
 // model-bouwer i.p.v. de bestand-route.
 function addCueOfType(type) {
   if (locked) return;
-  const names = { wait: 'Wacht', stop: 'Stop', fade: 'Fade', group: 'Groep', midi: 'MIDI', osc: 'OSC' };
+  const names = { wait: 'Wacht', stop: 'Stop', fade: 'Fade', group: 'Groep', midi: 'MIDI', osc: 'OSC', light: 'DMX' };
   const extra = type === 'stop' ? { target: 'all' } : {}; // een stop-cue stopt standaard alles
   const cue = baseCue({ type, name: names[type] || type, ...extra });
   cues.addExisting(cue);
@@ -1846,6 +1986,7 @@ function bindLoaders() {
   $('groupSelBtn').addEventListener('click', () => { closeMenus(); groupSelection(); });
   $('addMidiCue').addEventListener('click', () => { closeMenus(); addCueOfType('midi'); });
   $('addOscCue').addEventListener('click', () => { closeMenus(); addCueOfType('osc'); });
+  $('addLightCue').addEventListener('click', () => { closeMenus(); addCueOfType('light'); });
   $('fileInput').addEventListener('change', (e) => { addFiles(e.target.files); e.target.value = ''; });
   // Terugval-map-invoer (zonder secure context). Levert álle bestanden uit de map
   // en submappen; addFiles filtert de audio er zelf uit.
@@ -2720,6 +2861,13 @@ function bindKeyboard() {
     }
 
     if (e.metaKey || e.ctrlKey || e.altKey) return; // gemodificeerde toetsen negeren voor cue-acties
+
+    // Cart open: cijfertoetsen vuren de bijbehorende plek (1-9 → 0-8, 0 → 9).
+    if (cartOpen && !typing && /^[0-9]$/.test(e.key)) {
+      e.preventDefault();
+      cartFire(e.key === '0' ? 9 : parseInt(e.key, 10) - 1);
+      return;
+    }
 
     const action = actionForKey(e.key);
 
@@ -3864,6 +4012,7 @@ function bindInspectorSections() {
 function bindTopbar() {
   $('fsBtn').addEventListener('click', toggleFullscreen);
   $('lockBtn').addEventListener('click', toggleLock);
+  $('cartBtn').addEventListener('click', toggleCart);
   $('inspectorToggle').addEventListener('click', () => {
     settings.inspectorHidden = !settings.inspectorHidden;
     saveSettings();

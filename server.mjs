@@ -27,6 +27,7 @@ import { execFile, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
 import { randomBytes } from 'node:crypto';
 import { parseOsc, oscToCommand, encodeOsc } from './osc.mjs';
+import { artnetPacket, sacnPacket, sacnMulticastAddr, ARTNET_PORT, SACN_PORT } from './dmx.mjs';
 import { generateCert } from './cert.mjs';
 import { normalizeSpotifyPlaylistUrl } from './src/spotify-import.js';
 
@@ -1360,6 +1361,19 @@ const handleRequest = async (req, res) => {
       return;
     }
 
+    // DMX/Light-cue: de showcomputer laat de server Art-Net of sACN versturen.
+    if (urlPath === '/api/dmx-send') {
+      if (req.method !== 'POST') { json(res, 405, { error: 'Gebruik POST' }); return; }
+      const body = await readJson(req).catch(() => null);
+      if (!body || !Array.isArray(body.channels)) { json(res, 400, { error: 'Verwacht { protocol, host, universe, channels, fadeTime }' }); return; }
+      const fromOwnClient = body.deviceId && appClients().some((c) => c.deviceId === body.deviceId);
+      if (!fromOwnClient && !remoteAuthOk(url, body)) { json(res, 401, { error: 'Onjuist wachtwoord' }); return; }
+      const proto = body.protocol === 'sacn' ? 'sacn' : 'artnet';
+      const ok = sendDmx(proto, String(body.host || ''), Number(body.universe) || 0, body.channels, body.fadeTime);
+      json(res, ok ? 200 : 500, { ok });
+      return;
+    }
+
     if (urlPath === '/api/state') {
       if (req.method === 'GET') { json(res, 200, lastState || {}); return; }
       if (req.method !== 'POST') { json(res, 405, { error: 'Gebruik POST of GET' }); return; }
@@ -1508,6 +1522,66 @@ function sendOsc(host, port, address, args) {
     return true;
   } catch (err) {
     console.log(`OSC verzenden mislukt: ${err.message}`);
+    return false;
+  }
+}
+
+// --- Uitgaande DMX (voor Light/DMX-cues) -----------------------------------
+// Zelfde principe als OSC: de browser kan geen UDP, dus de showcomputer stuurt de
+// gewenste kanaalwaarden naar de server en die verstuurt Art-Net of sACN. De
+// server houdt per universe de huidige waarden bij, zodat fades (op ~40Hz) van de
+// stand van nú naar het doel kunnen lopen zonder dat andere kanalen springen.
+let dmxSendSock = null;
+const dmxSacnCid = randomBytes(16); // stabiele bron-id voor sACN, per serversessie
+const dmxUniverses = new Map(); // key → { levels: Uint8Array(512), timer, seq }
+
+function dmxSocket() {
+  if (!dmxSendSock) {
+    dmxSendSock = createSocket({ type: 'udp4' });
+    dmxSendSock.bind(() => { try { dmxSendSock.setBroadcast(true); } catch { /* mag falen */ } });
+  }
+  return dmxSendSock;
+}
+
+function dmxFrame(st, protocol, host, universe) {
+  const sock = dmxSocket();
+  st.seq = (st.seq + 1) & 0xff;
+  if (protocol === 'sacn') sock.send(sacnPacket(universe, st.levels, dmxSacnCid, 'CueGo', st.seq), SACN_PORT, sacnMulticastAddr(universe));
+  else sock.send(artnetPacket(universe, st.levels, st.seq), ARTNET_PORT, host || '255.255.255.255');
+}
+
+function sendDmx(protocol, host, universe, channels, fadeTime) {
+  try {
+    const key = `${protocol}|${host}|${universe}`;
+    let st = dmxUniverses.get(key);
+    if (!st) { st = { levels: new Uint8Array(512), timer: null, seq: 0 }; dmxUniverses.set(key, st); }
+    if (st.timer) { clearInterval(st.timer); st.timer = null; }
+
+    // Doelwaarden = huidige stand, met de opgegeven kanalen overschreven. Zo houden
+    // niet-genoemde kanalen hun waarde (een DMX-cue raakt alleen wat je noemt).
+    const targets = st.levels.slice();
+    for (const c of channels || []) {
+      const ch = parseInt(c.ch, 10);
+      if (ch >= 1 && ch <= 512) targets[ch - 1] = Math.max(0, Math.min(255, parseInt(c.value, 10) || 0));
+    }
+
+    const fade = Math.max(0, Number(fadeTime) || 0);
+    if (fade <= 0) {
+      st.levels = targets;
+      dmxFrame(st, protocol, host, universe);
+      return true;
+    }
+    const start = st.levels.slice();
+    const startAt = Date.now();
+    st.timer = setInterval(() => {
+      const t = Math.min(1, (Date.now() - startAt) / (fade * 1000));
+      for (let i = 0; i < 512; i++) st.levels[i] = Math.round(start[i] + (targets[i] - start[i]) * t);
+      dmxFrame(st, protocol, host, universe);
+      if (t >= 1) { clearInterval(st.timer); st.timer = null; }
+    }, 25);
+    return true;
+  } catch (err) {
+    console.log(`DMX verzenden mislukt: ${err.message}`);
     return false;
   }
 }

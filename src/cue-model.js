@@ -38,7 +38,7 @@ export const CUE_TYPES = ['audio', 'group', 'fade', 'stop', 'wait', 'midi', 'osc
 const freshEq = () => [0, 0, 0, 0, 0, 0];
 const freshMidiOut = () => ({ deviceId: '', type: 'noteon', channel: 1, data1: 60, data2: 100 });
 const freshOscOut = () => ({ host: '127.0.0.1', port: 53000, address: '', args: '' });
-const freshDmx = () => ({ universe: 1, protocol: 'artnet', fadeTime: 0, channels: [] });
+const freshDmx = () => ({ protocol: 'artnet', host: '', universe: 1, fadeTime: 0, channels: [] });
 
 // DE plek waar de veldenlijst van een cue staat — één keer, niet vier keer.
 // createCue, cueToMeta, metaToCue, de opslag-cache (storage.js) en het
@@ -81,6 +81,8 @@ export const CUE_FIELDS = [
   { key: 'parentId', def: '' },
   { key: 'mode', def: 'simultaneous' }, // group: 'simultaneous' | 'sequential'
   { key: 'collapsed', def: false }, // group ingeklapt in de lijst?
+  // --- cart / hotkey-soundboard ---
+  { key: 'cartSlot', def: -1 }, // plek in het cart-raster; -1 = niet in de cart
   // --- midi-out ---
   { key: 'midiOut', def: freshMidiOut },
   // --- osc-out ---

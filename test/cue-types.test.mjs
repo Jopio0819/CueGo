@@ -32,14 +32,14 @@ function sameFields(a, b) {
 function sampleCue(type) {
   const common = { type, number: `${type}-1`, name: `Test ${type}`, preWait: 0.5, autoFollow: true };
   switch (type) {
-    case 'audio': return baseCue({ ...common, fadeIn: 2, fadeOut: 4, volume: 0.8, loop: true, loopCount: '3', inPoint: 1.5, eq: [1, -2, 3, -4, 5, -6] });
+    case 'audio': return baseCue({ ...common, fadeIn: 2, fadeOut: 4, volume: 0.8, loop: true, loopCount: '3', inPoint: 1.5, eq: [1, -2, 3, -4, 5, -6], cartSlot: 5 });
     case 'wait': return baseCue({ ...common, waitTime: 7 });
     case 'stop': return baseCue({ ...common, target: 'cue-xyz', stopFade: 2.5 });
     case 'fade': return baseCue({ ...common, target: 'cue-abc', fadeTo: 0.3, fadeTime: 5, stopAfter: true });
     case 'group': return baseCue({ ...common, mode: 'sequential', collapsed: true, parentId: 'p1' });
     case 'midi': return baseCue({ ...common, midiOut: { deviceId: 'dev1', type: 'cc', channel: 3, data1: 74, data2: 64 } });
     case 'osc': return baseCue({ ...common, oscOut: { host: '10.0.0.5', port: 8000, address: '/go', args: '1 2.5 hoi' } });
-    case 'light': return baseCue({ ...common, dmx: { universe: 2, protocol: 'sacn', fadeTime: 3, channels: [{ ch: 1, value: 255 }] } });
+    case 'light': return baseCue({ ...common, dmx: { protocol: 'sacn', host: '', universe: 2, fadeTime: 3, channels: [{ ch: 1, value: 255 }] } });
     default: return baseCue(common);
   }
 }

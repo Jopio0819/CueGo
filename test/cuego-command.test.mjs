@@ -8,7 +8,7 @@
 // Draaien:  node streamdeck/test/cuego-command.test.mjs
 
 import { spawn, spawnSync } from 'node:child_process';
-import { mkdirSync, writeFileSync, readFileSync, rmSync, existsSync } from 'node:fs';
+import { mkdirSync, writeFileSync, readFileSync, rmSync, existsSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
@@ -179,13 +179,15 @@ async function run() {
     const buiten = fakeInstall(join(TMP, 'buitenste'));
     // Een echte CueGo in een submap van een andere "installatie" zetten.
     const binnen = join(buiten, 'cuego');
-    mkdirSync(binnen, { recursive: true });
-    for (const f of ['server.mjs', 'cert.mjs', 'osc.mjs']) {
-      writeFileSync(join(binnen, f), readFileSync(join(ROOT, f)));
-    }
+    // Kopieer álle top-level .mjs en alle src/*.js, zodat server.mjs sowieso al
+    // z'n imports vindt (robuuster dan een handmatige lijst die bij elke nieuwe
+    // import breekt).
     mkdirSync(join(binnen, 'src'), { recursive: true });
-    for (const f of ['app.js', 'control.js', 'audio-engine.js', 'cue-model.js', 'midi.js', 'net-remote.js', 'project.js', 'projects-store.js', 'show-sync.js', 'spotify-import.js', 'storage.js']) {
-      writeFileSync(join(binnen, 'src', f), readFileSync(join(ROOT, 'src', f)));
+    for (const f of readdirSync(ROOT)) {
+      if (f.endsWith('.mjs')) writeFileSync(join(binnen, f), readFileSync(join(ROOT, f)));
+    }
+    for (const f of readdirSync(join(ROOT, 'src'))) {
+      if (f.endsWith('.js')) writeFileSync(join(binnen, 'src', f), readFileSync(join(ROOT, 'src', f)));
     }
     const fd = spawn('node', ['server.mjs'], {
       cwd: binnen,
